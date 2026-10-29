@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Medical Interpreter · 医疗口译智能体演练台</title>
+<link rel="stylesheet" href="styles.css?v=20261028a">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">AMI</span>
+    <div>
+      <h1>医疗口译智能体演练台</h1>
+      <p class="sub">Agent Medical Interpreter</p>
+    </div>
+  </div>
+  <div class="topmeta">
+    <span id="modelBadge" class="badge">模型加载中</span>
+    <span id="dryBadge" class="badge warn" hidden>干跑模式</span>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- 左：模式与参数 -->
+  <aside class="panel config">
+    <h2>演练配置</h2>
+
+    <div class="modeTabs">
+      <button class="modeTab active" data-mode="auto">模式1 · 智能体自动演练</button>
+      <button class="modeTab" data-mode="doctor">模式2 · 我扮演医生</button>
+      <button class="modeTab" data-mode="drill">模式3 · 我扮演译员</button>
+    </div>
+
+    <label class="field">场景
+      <select id="scenario"></select>
+    </label>
+    <p id="scenarioDesc" class="desc"></p>
+
+    <details class="grp" open>
+      <summary id="doctorSummary">医生设定</summary>
+      <label class="field" id="departmentField">科室
+        <select id="department"></select>
+      </label>
+      <label class="field">医生语言
+        <select id="doctorLanguage"></select>
+      </label>
+    </details>
+
+    <details class="grp" open>
+      <summary>患者设定（留空自动生成）</summary>
+      <label class="field">国家
+        <select id="country"></select>
+      </label>
+      <label class="field">语言
+        <select id="language"></select>
+      </label>
+      <div class="grid2">
+        <label class="field">姓名
+          <input id="pname" placeholder="随机">
+        </label>
+        <label class="field">年龄
+          <input id="page" type="number" min="1" max="100" placeholder="随机">
+        </label>
+      </div>
+      <label class="field">性别
+        <select id="gender"></select>
+      </label>
+      <label class="field">性格特质
+        <select id="personality"></select>
+      </label>
+      <label class="field">健康素养
+        <select id="literacy"></select>
+      </label>
+      <label class="field">宗教信仰
+        <select id="religion"></select>
+      </label>
+      <label class="field">饮食习惯
+        <select id="diet"></select>
+      </label>
+      <label class="field">文化禁忌
+        <input id="taboos" list="tabooList" placeholder="可留空">
+        <datalist id="tabooList"></datalist>
+      </label>
+      <label class="field">症状（逗号分隔）
+        <textarea id="symptoms" rows="2" placeholder="留空由 AI 生成"></textarea>
+      </label>
+      <label class="field">既往症
+        <textarea id="history" rows="2" placeholder="留空由 AI 生成"></textarea>
+      </label>
+      <label class="field">疾病
+        <input id="disease" list="diseaseList" value="肾结石">
+        <datalist id="diseaseList"></datalist>
+      </label>
+      <button id="randomBtn" class="ghost wfull" type="button">🎲 随机生成患者</button>
+    </details>
+
+    <details class="grp">
+      <summary>朗读设置（推荐用 Edge 打开本页）</summary>
+      <label class="field">中文音色
+        <select id="voiceZh"></select>
+      </label>
+      <button id="testZh" class="ghost wfull" type="button">🔊 试听中文</button>
+      <label class="field">英文音色
+        <select id="voiceEn"></select>
+      </label>
+      <button id="testEn" class="ghost wfull" type="button">🔊 试听英文</button>
+      <p id="voiceHint" class="desc"></p>
+    </details>
+
+    <label class="field">译员类型（对应不同评估量规）
+      <div class="seg" id="personaSeg">
+        <button class="segBtn active" data-persona="professional">职业医疗口译员</button>
+        <button class="segBtn" data-persona="dual">双角色护士</button>
+      </div>
+    </label>
+
+    <label class="field" id="scoringField">评分方式（模式3）
+      <select id="scoringMode">
+        <option value="ai">AI 评分</option>
+        <option value="dual">双轨对比（AI + 人工）</option>
+        <option value="human">人工评分（不调用 AI 评委）</option>
+      </select>
+    </label>
+
+    <label class="field" id="roundsField">最大轮数（模式1）
+      <select id="maxRounds"><option>2</option><option selected>4</option><option>6</option></select>
+    </label>
+
+    <button id="startBtn" class="primary">开始演练</button>
+    <p id="statusLine" class="status"></p>
+  </aside>
+
+  <!-- 中：三栏对话 -->
+  <section class="stage">
+    <div class="col doctorCol">
+      <div class="colHead"><img class="avatar" id="doctorAvatar" src="av_doctor.svg" alt="医生头像"><span id="doctorRoleLabel">医生</span> · <span id="doctorLangLabel">中文</span></div>
+      <div class="colBody" id="doctorCol"></div>
+      <div class="inputBox" id="inputBoxM2" hidden>
+        <div class="inputHint" id="inputHintM2"></div>
+        <div id="refBoxM2" class="refBox" hidden></div>
+        <textarea id="utteranceInput" rows="3" placeholder="直接用患者的语言问诊…"></textarea>
+        <div class="inputRow">
+          <button id="hintBtnM2" class="ghost" title="卡住了？让 AI 给出当下应当说的英文">💡 参考建议</button>
+          <button id="finishBtnM2" class="ghost" title="提前结束并生成报告">结束演练</button>
+          <button id="submitBtnM2" class="primary">发送</button>
+        </div>
+      </div>
+    </div>
+    <div class="col interpCol">
+      <div class="colHead"><img class="avatar" src="av_interpreter.svg" alt="口译员头像"><span id="personaLabel">职业医疗口译员</span> · <span id="langPair"></span></div>
+      <div class="colBody" id="interpCol"></div>
+      <div class="inputBox" id="inputBox" hidden>
+        <div class="inputHint" id="inputHint"></div>
+        <div id="refBox" class="refBox" hidden></div>
+        <textarea id="translationInput" rows="3" placeholder="在此输入你的译文…"></textarea>
+        <div class="inputRow">
+          <button id="hintBtn" class="ghost" title="卡住了？让 AI 给出当下应当说的译文">💡 参考建议</button>
+          <button id="speechBtn" class="ghost" title="语音输入（浏览器 Web Speech API，可用性视浏览器而定）">🎤 语音</button>
+          <button id="submitBtn" class="primary">提交译文</button>
+        </div>
+      </div>
+    </div>
+    <div class="col patientCol">
+      <div class="colHead"><img class="avatar" src="av_patient.svg" alt="患者头像"><span>患者</span> · <span id="patientLangLabel">英文</span></div>
+      <div class="colBody" id="patientCol"></div>
+    </div>
+  </section>
+
+  <!-- 右：评估 / 量规 -->
+  <aside class="panel scores">
+    <div class="panelTabs">
+      <button class="pTab active" data-ptab="scores">演练评分</button>
+      <button class="pTab" data-ptab="rubric">量规编辑</button>
+    </div>
+
+    <div id="scoresView">
+      <h2>评估 · 能力量规</h2>
+      <div id="personaNote" class="personaNote"></div>
+      <div id="scoreList" class="scoreList"><p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p></div>
+      <div id="report" class="report" hidden>
+        <h3>演练报告</h3>
+        <div id="exportRow" class="exportRow"></div>
+        <div id="reportTotal" class="reportTotal"></div>
+        <div id="reportDims"></div>
+        <div id="humanBox" hidden>
+          <h4>人工评分（1-5 分，可留空跳过）</h4>
+          <div id="humanRows"></div>
+          <button id="submitHuman" class="primary" type="button">提交人工评分</button>
+          <p id="humanStatus" class="status"></p>
+        </div>
+        <h4>关键语言服务要点</h4>
+        <ul id="reportKeys"></ul>
+        <h4>总评摘录</h4>
+        <ul id="reportComments"></ul>
+      </div>
+    </div>
+
+    <div id="rubricView" hidden>
+      <div class="seg" id="rubricPersonaSeg">
+        <button class="segBtn active" data-rpersona="professional">职业医疗口译员</button>
+        <button class="segBtn" data-rpersona="dual">双角色护士</button>
+        <button class="segBtn" data-rpersona="medstaff">医护英语沟通</button>
+      </div>
+      <p class="desc">编辑保存后，评判员按此量规评分。key 为评分 JSON 字段名（小写英文+下划线）。</p>
+      <h4>三档行为锚点（全类型共用）</h4>
+      <textarea id="anchor0" rows="2"></textarea>
+      <textarea id="anchor1" rows="2"></textarea>
+      <textarea id="anchor2" rows="2"></textarea>
+      <h4>人设要点（每行一条）</h4>
+      <textarea id="personaNotes" rows="4"></textarea>
+      <h4>评估维度</h4>
+      <div id="dimRows" class="dimRows"></div>
+      <button id="addDim" class="ghost wfull" type="button">+ 添加维度</button>
+      <div class="inputRow">
+        <button id="resetRubric" class="ghost" type="button">恢复默认</button>
+        <button id="saveRubric" class="primary" type="button">保存量规</button>
+      </div>
+      <p id="rubricStatus" class="status"></p>
+    </div>
+  </aside>
+</main>
+
+<script src="app.js?v=20261028a"></script>
+</body>
+</html>

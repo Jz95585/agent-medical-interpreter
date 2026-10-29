@@ -1,0 +1,13 @@
+{
+  "name": "ami-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent Medical Interpreter · 医疗口译多智能体 Demo（模式1自动演练 + 模式3用户扮演译员）",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module"
+}

@@ -1,0 +1,203 @@
+/* AMI 演练台 · 设计语言参考 zhilu-system-demo（浅色卡片、圆角、折叠详情） */
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1c1e21;
+  --muted: #6b7280;
+  --border: #e4e7ec;
+  --blue: #2563eb;
+  --blue-soft: #eff4ff;
+  --green: #0f9d58;
+  --green-soft: #e8f7ee;
+  --orange: #d97706;
+  --orange-soft: #fdf3e3;
+  --accent: #2563eb;
+  --radius: 12px;
+  font-size: 14px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* 顶栏 */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: var(--card); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; gap: 12px; align-items: center; }
+.logo {
+  width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #2563eb, #0f9d58);
+  color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; letter-spacing: .5px;
+}
+.brand h1 { margin: 0; font-size: 17px; }
+.brand .sub { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+.badge {
+  display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  background: var(--blue-soft); color: var(--blue); border: 1px solid #d7e3ff; margin-left: 6px;
+}
+.badge.warn { background: var(--orange-soft); color: var(--orange); border-color: #f5dfbc; }
+
+/* 三栏布局 */
+.layout {
+  display: grid; grid-template-columns: 264px minmax(0, 1fr) 300px;
+  gap: 14px; padding: 14px 20px; align-items: start;
+}
+.panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px;
+}
+.panel h2 { margin: 0 0 10px; font-size: 15px; }
+
+/* 配置面板 */
+.modeTabs { display: grid; gap: 6px; margin-bottom: 12px; }
+.modeTab {
+  text-align: left; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: #fafbfc; cursor: pointer; font-size: 13px; color: var(--text);
+}
+.modeTab.active { background: var(--blue-soft); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+.modeTab:disabled { color: #b3b9c4; cursor: not-allowed; }
+.modeTab .soon { float: right; font-size: 11px; color: #b3b9c4; }
+.field { display: block; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.field select, .field input {
+  display: block; width: 100%; margin-top: 4px; padding: 7px 9px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); background: #fff;
+}
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+.segBtn {
+  padding: 7px 4px; border-radius: 8px; border: 1px solid var(--border); background: #fafbfc;
+  font-size: 12px; cursor: pointer;
+}
+.segBtn.active { background: var(--green-soft); border-color: var(--green); color: var(--green); font-weight: 600; }
+.desc { margin: -4px 0 10px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.primary {
+  width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--accent);
+  color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.primary:disabled { opacity: .55; cursor: wait; }
+.ghost {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 13px;
+}
+.status { font-size: 12px; color: var(--muted); margin: 10px 0 0; min-height: 16px; }
+
+/* 折叠分组与网格 */
+.grp { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 2px; }
+.grp summary { font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0; color: var(--text); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid2 .field { margin-bottom: 10px; }
+.wfull { width: 100%; margin-bottom: 10px; }
+.field textarea { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+
+/* 右栏标签页 */
+.panelTabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.pTab {
+  padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: #fafbfc;
+  font-size: 13px; cursor: pointer; color: var(--text);
+}
+.pTab.active { background: var(--blue-soft); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+#rubricView h4 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+#rubricView textarea {
+  display: block; width: 100%; margin-bottom: 6px; padding: 7px 9px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-family: inherit; resize: vertical;
+}
+.dimRows { display: grid; gap: 8px; max-height: 34vh; overflow-y: auto; margin-bottom: 8px; }
+.dimEdit { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 5px; }
+.dimEdit input { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; width: 100%; }
+.dimEditHead { display: grid; grid-template-columns: 1fr 1fr auto; gap: 5px; align-items: center; }
+.delDim { padding: 4px 8px; font-size: 12px; }
+#rubricView .inputRow { margin-top: 8px; }
+#rubricStatus { min-height: 14px; }
+
+/* 舞台三栏 */
+.stage {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+  min-height: calc(100vh - 140px);
+}
+.col {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.colHead {
+  padding: 8px 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; background: #fbfcfd;
+}
+.avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.blue { background: var(--blue); } .dot.green { background: var(--green); } .dot.orange { background: var(--orange); }
+.colBody { flex: 1; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.bubble {
+  padding: 9px 11px; border-radius: 10px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.bubble .tag { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.speakBtn {
+  float: right; margin: -2px 0 0 6px; padding: 0 3px; border: 0; background: transparent;
+  cursor: pointer; font-size: 12px; opacity: .7;
+}
+.speakBtn:hover { opacity: 1; }
+.doctorCol .bubble { background: var(--blue-soft); }
+.patientCol .bubble { background: var(--orange-soft); }
+.interpCol .bubble { background: var(--green-soft); }
+.bubble.scored { outline: 2px solid #f2c94c; }
+.bubble .scoreChip {
+  display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px;
+  background: #fff; border: 1px solid var(--border); font-size: 11px; color: var(--muted);
+}
+.inputBox { border-top: 1px solid var(--border); padding: 10px 12px; background: #fbfcfd; }
+.inputHint { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+#translationInput {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; resize: vertical; font-family: inherit;
+}
+.inputRow { display: flex; gap: 8px; margin-top: 8px; }
+.inputRow .primary { width: auto; flex: 1; }
+
+/* 评估面板 */
+.personaNote {
+  font-size: 11px; color: var(--muted); background: #fafbfc; border: 1px dashed var(--border);
+  border-radius: 8px; padding: 8px; margin-bottom: 10px; line-height: 1.5;
+}
+.scoreList { display: grid; gap: 8px; max-height: 46vh; overflow-y: auto; }
+.scoreList .empty { color: var(--muted); font-size: 12px; }
+.scoreCard { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.scoreCard .head { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.scoreCard .total { font-weight: 700; }
+.scoreCard .total.good { color: var(--green); } .scoreCard .total.mid { color: var(--orange); } .scoreCard .total.low { color: #dc2626; }
+.scoreCard .comment { color: var(--muted); font-size: 11px; }
+.scoreCard .kp { margin-top: 4px; font-size: 11px; color: var(--blue); }
+.report { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+.exportRow { margin-bottom: 10px; }
+.exportRow a {
+  display: inline-block; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--green);
+  color: var(--green); text-decoration: none; font-size: 13px; font-weight: 600; background: var(--green-soft);
+}
+.report h3 { margin: 0 0 6px; font-size: 14px; }
+.refBox {
+  margin-bottom: 8px; padding: 8px 10px; border: 1px dashed #f2c94c; border-radius: 8px;
+  background: #fffbf0; font-size: 12px; line-height: 1.55; color: var(--text);
+}
+.refBox .tag { color: var(--orange); font-size: 11px; display: block; margin-bottom: 3px; }
+.humanRow {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;
+}
+.humanRow .pairHead { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
+.humanRow .pairText { color: var(--muted); margin-bottom: 4px; line-height: 1.5; }
+.humanRow .pairCtrl { display: flex; gap: 8px; align-items: center; }
+.humanRow select, .humanRow input {
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+}
+.humanRow select { width: 70px; }
+.humanRow .cm { flex: 1; }
+.report h4 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.reportTotal { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.dimRow { margin-bottom: 6px; font-size: 12px; }
+.dimRow .name { display: flex; justify-content: space-between; }
+.dimBar { height: 5px; border-radius: 999px; background: #eef0f3; margin-top: 3px; overflow: hidden; }
+.dimBar i { display: block; height: 100%; border-radius: 999px; background: var(--green); }
+.report ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text); }
+.report li { margin-bottom: 4px; line-height: 1.5; }
+
+@media (max-width: 1080px) {
+  .layout { grid-template-columns: 1fr; }
+  .stage { grid-template-columns: 1fr; min-height: auto; }
+}

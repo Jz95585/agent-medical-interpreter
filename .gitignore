@@ -1,0 +1,20 @@
+# ===== 机密文件：绝不入库 =====
+# .env 里有 AMI_API_KEY，一旦提交，任何拿到仓库的人都能花你的钱
+.env
+.env.*
+*.env
+!.env.example
+
+# ===== Node.js 依赖 =====
+node_modules/
+npm-debug.log*
+
+# ===== 运行产物（可再生数据不入库） =====
+output/
+src/.consumer_cache.json
+server.log*
+
+# ===== 系统杂项 =====
+Thumbs.db
+.DS_Store
+desktop.ini
