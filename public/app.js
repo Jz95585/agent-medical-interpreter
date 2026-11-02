@@ -41,14 +41,6 @@ async function init() {
   };
   sc.onchange();
 
-  function applyRoleUI(cur) {
-    const rl = cur?.roleLabel || '医生';
-    $('#doctorRoleLabel').textContent = rl;
-    $('#doctorSummary').textContent = rl + '设定';
-    $('#departmentField').style.display = cur?.department === false ? 'none' : '';
-    $('#doctorAvatar').src = rl === '前台接待员' ? 'av_receptionist.svg' : 'av_doctor.svg';
-  }
-
   // 下拉池
   $('#department').innerHTML = p.departments.map(d => `<option>${d}</option>`).join('');
   $('#doctorLanguage').innerHTML = p.doctorLanguages.map(d => `<option>${d}</option>`).join('');
@@ -288,9 +280,24 @@ function speak(text, lang) {
 
 function setStatus(text) { $('#statusLine').textContent = text; }
 
+// 非 200 响应统一提取错误信息（服务端错误为 JSON {error}）
+async function respError(resp) {
+  try { const d = await resp.json(); if (d.error) return d.error; } catch { /* 非 JSON */ }
+  return `HTTP ${resp.status}`;
+}
+
 function roleLabel() {
   const cur = state.config?.scenarios.find(x => x.id === $('#scenario').value);
   return cur?.roleLabel || '医生';
+}
+
+// 角色随场景联动：列头标签、设定组标题、科室显隐、头像（模块顶层，clearCols 与场景切换共用）
+function applyRoleUI(cur) {
+  const rl = cur?.roleLabel || '医生';
+  $('#doctorRoleLabel').textContent = rl;
+  $('#doctorSummary').textContent = rl + '设定';
+  $('#departmentField').style.display = cur?.department === false ? 'none' : '';
+  $('#doctorAvatar').src = rl === '前台接待员' ? 'av_receptionist.svg' : 'av_doctor.svg';
 }
 function dirLabel(dir) {
   const rl = roleLabel();
@@ -310,6 +317,7 @@ async function startAuto() {
   const resp = await fetch('/api/auto', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
   });
+  if (!resp.ok) throw new Error(await respError(resp));  // 非 200 直接报错，避免静默失败
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
