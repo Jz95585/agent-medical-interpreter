@@ -183,6 +183,15 @@ body {
   color: var(--green); text-decoration: none; font-size: 13px; font-weight: 600; background: var(--green-soft);
 }
 .report h3 { margin: 0 0 6px; font-size: 14px; }
+.feedbackBox {
+  margin: 8px 0; padding: 8px 10px; border: 1px solid var(--green); border-radius: 8px;
+  background: var(--green-soft); font-size: 12px; line-height: 1.6;
+}
+.feedbackBox h4 { margin: 6px 0 4px; font-size: 12px; }
+.feedbackBox h4:first-child { margin-top: 0; }
+.feedbackBox ul { margin: 0; padding-left: 18px; }
+.feedbackBox .fbRef { margin-bottom: 6px; color: var(--text); }
+.feedbackBox .refLine { color: var(--green); }
 .refBox {
   margin-bottom: 8px; padding: 8px 10px; border: 1px dashed #f2c94c; border-radius: 8px;
   background: #fffbf0; font-size: 12px; line-height: 1.55; color: var(--text);

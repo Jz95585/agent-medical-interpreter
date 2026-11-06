@@ -4,7 +4,7 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback} from './agents.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
@@ -301,6 +301,7 @@ async function drillStep(env, body) {
     state.pairs = buildPairs(state);
     state.round = Math.ceil(sess.half / 2);
     state.teaching = await genTeaching(env, state, undefined);
+    result.feedback = await genPersonalFeedback(env, state, undefined).catch(() => null); // #3：逐句参考译文 + 个性化提升方案
     result.pairs = state.pairs;
     result.report = scoreReport(state);
     result.saved = await persist('drill', state, {report: result.report, pairs: state.pairs}).catch(() => null);

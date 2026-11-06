@@ -536,6 +536,7 @@ async function submitTranslation() {
       setStatus(`演练结束：${who}终止了对话。`);
       state.lastPairs = data.pairs || [];
       renderReport(data.report);
+      renderFeedback(data.feedback);
       showExport(data.exportId);
       state.sessionId = null;
       $('#inputBox').hidden = true;
@@ -579,9 +580,25 @@ function addScoreCard(score, label) {
   if (bubbles.length) bubbles[bubbles.length - 1].classList.add('scored');
 }
 
+// 个性化反馈（#3）：逐句参考译文对照 + 提升方案
+function renderFeedback(fb) {
+  const box = $('#feedbackBox');
+  if (!fb || (!fb.references?.length && !fb.plan?.length)) { box.hidden = true; return; }
+  const refs = (fb.references || []).map(r => {
+    const p = (state.lastPairs || []).find(x => x.half === r.half);
+    if (!p) return '';
+    return `<div class="fbRef"><b>第${r.half}句</b>　原话：${p.original}<br>我的译文：${p.translated}<br><span class="refLine">参考译文：${r.reference}</span></div>`;
+  }).join('');
+  const plan = (fb.plan || []).map(x =>
+    `<li><b>${x.point}</b>：${x.advice}${x.example ? `<br><span class="refLine">示例：${x.example}</span>` : ''}</li>`).join('');
+  box.innerHTML = `<h4>逐句参考译文对照</h4>${refs}<h4>个性化提升方案</h4><ul>${plan || '<li>—</li>'}</ul>`;
+  box.hidden = false;
+}
+
 function renderReport(report) {
   if (!report) return;
   $('#report').hidden = false;
+  $('#feedbackBox').hidden = true;
   $('#exportRow').innerHTML = '';
   if (report.totalAvg == null) {
     // 人工评分模式：无 AI 逐维数据

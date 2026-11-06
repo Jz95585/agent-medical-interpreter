@@ -107,6 +107,7 @@ function doctorSystem(state) {
 话轮管理（硬性要求）：你每次发言只允许做一件事——要么只提出一个问题，要么只传达一条信息或医嘱。即使有多个问题或事项，也必须分多轮逐一提出，禁止在一次输出中连续追问多个问题。
 当你想终止对话时，请直接输出 'TERMINATE'。
 ${sc.terminateNote}
+对话推进要求：像真实问诊一样层层深入——先消化患者已提供的陈述并从中提取关键信息（症状、部位、时长、诱因、既往史），下一步追问应建立在这些信息之上；不要重复询问患者已经回答过的内容，也不要跳过信息缺口直接给诊断。
 请始终使用${dl}表达。`;
 }
 
@@ -127,9 +128,10 @@ async function doctorTurn(env, state, signal) {
     ? msd.search(state.patientInfo.disease_info.disease_type, 2)
     : [];
   if (msdRefs.length) state.msdRefs = msdRefs;
+  // 检索命中→注入参考资料；无命中→明确告知未收录，防止医生假装引用知识库或编造手册内容
   const refText = msdRefs.length
     ? `\n以下是来自诊疗手册（专业版）的参考资料，供诊断与解释时参考：\n${JSON.stringify(msdRefs)}\n`
-    : '';
+    : (scenario.msdSearch ? '\n注意：知识库中未收录该疾病的专门条目。请基于通用医学常识作答，不要声称引用了知识库或诊疗手册的内容。\n' : '');
 
   const prompt = `你和口译员已有下面的对话：
 ${convText}
@@ -363,6 +365,35 @@ async function genReference(env, state, original, targetLang, signal) {
   }
 }
 
+// ─── 个性化反馈（设计稿 #3）：逐句参考译文对照 + 基于本场表现的提升方案 ───
+async function genPersonalFeedback(env, state, signal) {
+  const pairs = state.pairs || [];
+  if (!pairs.length) return null;
+  const lines = pairs.map(p => {
+    const s = state.scores[p.half - 1];
+    return `第${p.half}句（原话：${p.original} → 用户译文：${p.translated}）${s ? `AI 评语：${s.comment}` : ''}`;
+  }).join('\n');
+  const r = await callModel(env, [
+    {role: 'user', content: `以下是医疗口译演练中用户（译员）的完整译文记录：
+${lines}
+用户共使用参考建议 ${state.hintUsed || 0} 次。
+请面向这位学生产出个性化反馈，输出严格 JSON：
+- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 该句的专业参考译文（第一人称、符合医疗口译规范）}
+- plan: 数组，2-4 条个性化提升建议。必须针对本场的实际问题（对比原话与译文，找出漏译、增译、术语错误、句型生硬、人称不一致等），每项 {point: 问题点, advice: 具体改进方法, example: 改写示例（引用本场实际语句）}；不要输出与译文无关的通用建议。
+只输出 JSON，不要额外文字。`},
+  ], {json: true, max: 2200, temperature: 0.3, tag: 'feedback', signal});
+  try {
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return {
+      references: Array.isArray(t.references) ? t.references.slice(0, pairs.length) : [],
+      plan: Array.isArray(t.plan) ? t.plan.slice(0, 4) : [],
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return null; // 生成失败不阻断主流程
+  }
+}
+
 // ─── 剧本讲解生成（设计稿：医学知识/诊疗流程/专业术语/语言表达难点）───
 async function genTeaching(env, state, signal) {
   const scenario = getScenario(state.settings.scenario);
@@ -505,4 +536,4 @@ ${JSON.stringify(view)}
   return false; // 容错：两次异常/非法回复按继续处理，由外层 MAX_ROUNDS 兜底
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback};
