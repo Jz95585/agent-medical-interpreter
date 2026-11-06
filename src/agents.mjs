@@ -21,6 +21,31 @@ function splitList(text) {
   return String(text || '').split(/[,，、;；\n]+/).map(s => s.trim()).filter(Boolean);
 }
 
+// ─── 语言方向双保险：按目标语言做中文字符占比校验，不符则带纠正提示重试一次 ───
+// （治"译员把方向译反/混语言"：中文译文 CJK 占比应≥30%，拉丁语言译文 CJK 占比应≤5%；
+//   日文/韩文因汉字词占比天然波动，不做占比校验）
+function cjkRatio(s) {
+  const t = String(s || '').replace(/\s/g, '');
+  if (!t.length) return 0;
+  return (t.match(/[\u4e00-\u9fff]/g) || []).length / t.length;
+}
+function langMismatch(text, lang) {
+  if (lang === '中文') return cjkRatio(text) < 0.3;
+  if (lang === '日文' || lang === '韩文') return false;
+  return cjkRatio(text) > 0.05;
+}
+async function callWithLangCheck(env, system, prompt, expectedLang, opts, signal) {
+  const r = (await callModel(env, [
+    {role: 'system', content: system},
+    {role: 'user', content: prompt},
+  ], {...opts, signal})).message;
+  if (!langMismatch(r, expectedLang)) return r;
+  return (await callModel(env, [
+    {role: 'system', content: system},
+    {role: 'user', content: `${prompt}\n\n纠正：你上一次的输出语言方向错误。本次输出必须完全使用${expectedLang}，只输出对话或译文本身，不要混用其他语言。`},
+  ], {...opts, signal})).message;
+}
+
 // ─── 患者人设生成（参数面板显式值优先，缺失项由 LLM/随机补齐）───
 async function makePatientInfo(env, {scenario, params}, signal) {
   params = params || {};
@@ -79,7 +104,7 @@ function doctorSystem(state) {
 用患者易于理解的话语表达方式进行沟通。
 请你表现得像一位真实的医务人员，直接输出你的回答或询问，而不要输出其它内容（如语气，下一步动作补充等）。
 你的输出中不应该有任何特殊符号如括号，破折号，冒号等。
-如果您对患者有多个问题或事项，尽量一次对话只提出一个，避免输出长段对话。
+话轮管理（硬性要求）：你每次发言只允许做一件事——要么只提出一个问题，要么只传达一条信息或医嘱。即使有多个问题或事项，也必须分多轮逐一提出，禁止在一次输出中连续追问多个问题。
 当你想终止对话时，请直接输出 'TERMINATE'。
 ${sc.terminateNote}
 请始终使用${dl}表达。`;
@@ -99,7 +124,7 @@ async function doctorTurn(env, state, signal) {
   // 首轮自动注入 MSD 专业版资料（professional version → 医生），并留存供剧本讲解导出
   // 预约挂号等非诊疗场景关闭 MSD 检索
   const msdRefs = scenario.msdSearch && view.length <= 1
-    ? msd.search(state.patientInfo.disease_info.disease_type + ' ' + scenario.name, 2)
+    ? msd.search(state.patientInfo.disease_info.disease_type, 2)
     : [];
   if (msdRefs.length) state.msdRefs = msdRefs;
   const refText = msdRefs.length
@@ -116,20 +141,18 @@ ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案�
 必须确保输出的对话都是能够在现实${scenario.name}场景中口头表述的。
 如果你认为对话可以结束，直接回复"TERMINATE"，否则你的输出中不应该包含任何"TERMINATE"。`;
 
-  let reply = (await callModel(env, [
-    {role: 'system', content: doctorSystem(state)},
-    {role: 'user', content: prompt},
-  ], {max: 900, temperature: 0.5, tag: state.settings.scenario === 'followup' ? 'doctor_follow' : 'doctor', signal})).message;
+  const dl = state.settings.doctorLanguage || '中文';
+  let reply = await callWithLangCheck(env, doctorSystem(state), prompt, dl,
+    {max: 900, temperature: 0.5, tag: state.settings.scenario === 'followup' ? 'doctor_follow' : 'doctor', signal}, signal);
 
   // 保留 SQL: 文本约定（最多一轮检索回灌）
   const m = /SQL:\s*(.+)/.exec(reply);
   if (m) {
     const kw = (/%\s*([^%']+?)\s*%/.exec(m[1]) || [null, state.patientInfo.disease_info.disease_type])[1];
     const hits = msd.search(String(kw || state.patientInfo.disease_info.disease_type), 3);
-    reply = (await callModel(env, [
-      {role: 'system', content: doctorSystem(state)},
-      {role: 'user', content: `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(hits)}\n\n请基于检索结果生成医生回复。`},
-    ], {max: 900, temperature: 0.5, tag: 'doctor', signal})).message;
+    reply = await callWithLangCheck(env, doctorSystem(state),
+      `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(hits)}\n\n请基于检索结果生成医生回复。`, dl,
+      {max: 900, temperature: 0.5, tag: 'doctor', signal}, signal);
     state.sqlQueries.push({keyword: kw, hits: hits.length});
   }
 
@@ -191,10 +214,8 @@ ${convText}
 ${consumerText}
 请你根据上述对话内容，继续以患者的身份回答口译员，如果没有对话内容，请你先描述你的症状，如果你认为对话可以结束，直接回复"TERMINATE"。`;
 
-  const reply = (await callModel(env, [
-    {role: 'system', content: system},
-    {role: 'user', content: prompt},
-  ], {max: 500, temperature: 0.6, tag: 'patient', signal})).message;
+  const reply = await callWithLangCheck(env, system, prompt, info.language,
+    {max: 500, temperature: 0.6, tag: 'patient', signal}, signal);
 
   const terminated = isTerminate(reply);
   const content = stripTerminate(reply);
@@ -244,13 +265,13 @@ ${convText}
 请你根据上述对话内容，继续以口译员的身份翻译双方的对话并传递给对方。
 在翻译'from_patient'内容时，请使用${dl}，并确保翻译后的内容准确无误并具有医学专业性。
 在翻译'from_doctor'内容时，请使用${pl}，并确保翻译后的内容易于患者理解。
+语言方向硬性要求：from_patient 的译文只能使用${dl}，from_doctor 的译文只能使用${pl}，严禁译反方向或混用两种语言。
 ${fewshot}请你保证翻译内容始终使用第一人称完整地传达双方的意图和情感。
 你的输出总是最后一条对话的翻译，而不要添加任何额外的符号或分析。${introNote}`;
 
-  const reply = (await callModel(env, [
-    {role: 'system', content: interpreterSystem(state)},
-    {role: 'user', content: prompt},
-  ], {max: 500, temperature: 0.3, tag: 'interpreter', signal})).message;
+  const reply = await callWithLangCheck(env, interpreterSystem(state), prompt,
+    flag === 1 ? pl : dl, // to_patient 用患者语言，to_doctor 用医生语言
+    {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
 
   const content = reply.trim();
   const dir = flag === 1 ? 'to_patient' : 'to_doctor';
@@ -307,6 +328,7 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   }
   result.total = total;
   result.perfect = perfectScore(personaId);
+  result.percent = Math.round(total / result.perfect * 100); // 百分制统一展示（维度 1-5 制不变）
   result.comment = String(scores.comment || '').slice(0, 200);
   result.key_point = String(scores.key_point || '').slice(0, 100);
   state.scores.push(result);
@@ -399,6 +421,7 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   }
   result.total = total;
   result.perfect = dims.length * 5;
+  result.percent = Math.round(total / result.perfect * 100); // 百分制统一展示
   result.comment = String(scores.suggestion || '').slice(0, 300);
   result.key_point = String(scores.reason || '').slice(0, 200);
   state.scores.push(result);

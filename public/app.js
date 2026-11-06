@@ -11,7 +11,7 @@ const state = {
   pending: null,      // {original, round} 等待用户翻译的原话
   drillLangs: null,   // {doctorLanguage, patientLanguage}
   drillScoring: 'ai',
-  aiTotals: [],       // 每句 AI 总分（与 pairs 按序对应）
+  aiTotals: [],       // 每句 AI 综合得分（百分制，与 pairs 按序对应）
   lastPairs: null,
   running: false,
   rubricPersona: 'professional',
@@ -58,6 +58,27 @@ async function init() {
   $('#country').onchange = () => {
     const c = p.countries.find(x => x.name === $('#country').value);
     if (c && p.languages.includes(c.language)) $('#language').value = c.language;
+  };
+
+  // 标准病人预设：一键填充患者参数
+  $('#presetSelect').innerHTML = '<option value="">— 选择后自动填充以下参数 —</option>' +
+    p.presets.map((x, i) => `<option value="${i}">${x.label}</option>`).join('');
+  $('#presetSelect').onchange = () => {
+    const x = p.presets[Number($('#presetSelect').value)];
+    if (!x) return;
+    $('#disease').value = x.disease;
+    $('#country').value = x.country;
+    $('#language').value = x.language;
+    $('#gender').value = x.gender;
+    $('#page').value = x.age;
+    $('#personality').value = x.personality;
+    $('#literacy').value = x.healthLiteracy;
+    $('#religion').value = x.religion;
+    $('#diet').value = x.diet;
+    $('#taboos').value = x.taboos;
+    $('#symptoms').value = x.symptoms;
+    $('#history').value = x.history;
+    setStatus('已载入标准病人预设：' + x.label);
   };
 
   $('#randomBtn').onclick = randomPatient;
@@ -127,8 +148,16 @@ async function init() {
     rubricStatus('已恢复默认。');
   };
 
-  await loadRubric(); // 预加载，供 personaNote 展示
-  showPersonaNote();
+  // 量规后台化：RUBRIC_PUBLIC=0 时隐藏编辑页，不预载量规（译员人设说明随之隐藏）
+  const rubricTab = document.querySelector('.pTab[data-ptab="rubric"]');
+  if (rubricTab) rubricTab.hidden = !cfg.rubricPublic;
+  if (cfg.rubricPublic) {
+    await loadRubric(); // 预加载，供 personaNote 展示
+    showPersonaNote();
+  } else {
+    document.querySelectorAll('#rubricPersonaSeg .segBtn').forEach(b => b.disabled = true);
+    $('#addDim').disabled = $('#saveRubric').disabled = $('#resetRubric').disabled = true;
+  }
 }
 
 function showPersonaNote() {
@@ -136,7 +165,7 @@ function showPersonaNote() {
   if (!rub) return;
   const persona = rub[state.persona];
   $('#personaNote').innerHTML = persona.personaNote.map(s => '· ' + s).join('<br>') +
-    `<br>共 ${persona.dims.length} 个维度，满分 ${persona.dims.length * 5}`;
+    `<br>共 ${persona.dims.length} 个评估维度（每维 1-5 分）。综合得分按 100 分制折算：<b>维度场均分 ÷ 5 × 100</b>`;
 }
 
 // ─── 患者随机生成 ───
@@ -385,7 +414,7 @@ async function startDrill() {
   $('#inputHint').textContent = `请将医生的话译成${data.settings.patientLanguage}（参考要点：${data.hints[0]?.title || ''}）`;
   $('#inputBox').hidden = false;
   $('#translationInput').value = '';
-  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country}）· 你以【${data.settings.personaName}】身份开始口译，满分 ${data.settings.perfect}`);
+  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country}）· 你以【${data.settings.personaName}】身份开始口译，满分 100`);
 }
 
 async function submitTranslation() {
@@ -408,7 +437,7 @@ async function submitTranslation() {
 
     if (data.score) {
       addScoreCard(data.score, `第${state.pending.round}轮 · 我的译文`);
-      state.aiTotals.push(data.score.total);
+      state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100));
     } else {
       state.aiTotals.push(null);
     }
@@ -448,10 +477,9 @@ function addScoreCard(score, label) {
   if (empty) empty.remove();
   const card = document.createElement('div');
   card.className = 'scoreCard';
-  const ratio = score.total / score.perfect;
   card.innerHTML = `
     <div class="head"><span>${label}</span>
-      <span class="total ${scoreClass(ratio)}">${score.total} / ${score.perfect}</span></div>
+      <span class="total ${scoreClass(score.percent / 100)}">${score.percent} / 100</span></div>
     <div class="comment"></div>
     <div class="kp"></div>`;
   card.querySelector('.comment').textContent = score.comment || '';
@@ -467,10 +495,11 @@ function renderReport(report) {
   $('#exportRow').innerHTML = '';
   if (report.totalAvg == null) {
     // 人工评分模式：无 AI 逐维数据
-    $('#reportTotal').innerHTML = `人工评分均分 <span style="color:var(--green)">${report.human?.avg ?? '—'}</span> / 5 · 共 ${report.human?.count ?? 0} 句已评分`;
+    $('#reportTotal').innerHTML = `人工评分综合 <span style="color:var(--green)">${report.human?.percent ?? '—'}</span> / 100 · 共 ${report.human?.count ?? 0} 句已评分`;
     $('#reportDims').innerHTML = '';
   } else {
-    $('#reportTotal').innerHTML = `AI 场均 <span style="color:var(--green)">${report.totalAvg}</span> / 5 · 共 ${report.utterances} 句译文`;
+    $('#reportTotal').innerHTML = `AI 综合得分 <span style="color:var(--green)">${report.overall}</span> / 100` +
+      `（= 维度场均 ${report.totalAvg} ÷ 5 × 100）· 共 ${report.utterances} 句译文，各维度 1-5 分制`;
     $('#reportDims').innerHTML = report.perDim.map(d => `
       <div class="dimRow">
         <div class="name"><span>${d.group} · ${d.label}</span><span>${d.avg}</span></div>
@@ -480,7 +509,7 @@ function renderReport(report) {
   if (report.human) {
     state.humanCmp = report.human.items.map(h => {
       const ai = state.aiTotals[h.half - 1];
-      return `<li>第${h.round}轮 · ${dirLabel(h.dir)} · 人评 ${h.score}/5${ai ? ` · AI ${ai}/5` : ''}${h.comment ? ` · ${h.comment}` : ''}</li>`;
+      return `<li>第${h.round}轮 · ${dirLabel(h.dir)} · 人评 ${h.score}/5${ai ? ` · AI 折算 ${ai}/100` : ''}${h.comment ? ` · ${h.comment}` : ''}</li>`;
     }).join('');
   } else state.humanCmp = '';
   renderHumanScoring(report);
@@ -497,7 +526,7 @@ function renderHumanScoring(report) {
     const ai = state.aiTotals[p.half - 1];
     return `
     <div class="humanRow" data-half="${p.half}">
-      <div class="pairHead"><span>第${p.round}轮 · ${dirLabel(p.dir)}</span><span>${ai ? `AI ${ai}/5` : 'AI 未评分'}</span></div>
+      <div class="pairHead"><span>第${p.round}轮 · ${dirLabel(p.dir)}</span><span>${ai ? `AI ${ai}/100` : 'AI 未评分'}</span></div>
       <div class="pairText">原话：${p.original}</div>
       <div class="pairText">译文：${p.translated}</div>
       <div class="pairCtrl">
@@ -528,7 +557,7 @@ async function submitHumanScores() {
   const data = await resp.json();
   $('#submitHuman').disabled = false;
   if (!resp.ok) { $('#humanStatus').textContent = '提交失败：' + (data.error || resp.status); return; }
-  $('#humanStatus').textContent = `已提交 ${data.report.human?.count || 0} 句人工评分，均分 ${data.report.human?.avg} / 5，已计入报告与 docx 导出。`;
+  $('#humanStatus').textContent = `已提交 ${data.report.human?.count || 0} 句人工评分，综合 ${data.report.human?.percent ?? '—'} / 100（维度场均 ${data.report.human?.avg} / 5），已计入报告与 docx 导出。`;
   $('#humanBox').hidden = true;
 }
 
@@ -565,7 +594,7 @@ async function startM2() {
   $('#patientLangLabel').textContent = data.settings.patientLanguage;
   $('#doctorLangLabel').textContent = '中文';
   $('#langPair').textContent = `中文 ↔ ${data.settings.patientLanguage}`;
-  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country} · ${data.patientInfo.personality}）· 评分量规【医护英语沟通】满分 ${data.settings.perfect}`);
+  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country} · ${data.patientInfo.personality}）· 评分量规【医护英语沟通】满分 100`);
   $('#inputHintM2').textContent = `请你以医生身份先开口（${data.settings.patientLanguage}）：${data.openingGuide}`;
   $('#inputBoxM2').hidden = false;
   $('#utteranceInput').value = '';
@@ -585,7 +614,7 @@ async function submitM2() {
     });
     const data = await resp.json();
     if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
-    if (data.score) { addScoreCard(data.score, `第${data.half}句 · 我的表达`); state.aiTotals.push(data.score.total); }
+    if (data.score) { addScoreCard(data.score, `第${data.half}句 · 我的表达`); state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100)); }
     if (data.finished) {
       const who = data.finished.reason === 'patient_terminate' ? '患者终止' : '达到句数上限';
       setStatus(`演练结束（${who}）`);

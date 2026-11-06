@@ -101,7 +101,6 @@ function buildScriptDocx(record) {
   const personaName = (record.report && record.report.perDim && s.interpreterType) ? '' : '';
   const interpreterName = '王译员';
   const dims = (record.report && record.report.perDim) || [];
-  const perfect = dims.length ? dims.length * 5 : '';
 
   const ps = [];
 
@@ -162,8 +161,8 @@ function buildScriptDocx(record) {
       round = Math.ceil(h / 2);
       const dirLabel = ai ? (h % 2 === 1 ? rlShort + '→患' : '患→' + rlShort) : (hu.dir === 'to_patient' ? rlShort + '→患' : '患→' + rlShort);
       const scoreParts = [];
-      if (ai) scoreParts.push(`AI ${ai.total} / ${ai.perfect}`);
-      if (hu) scoreParts.push(`人评 ${hu.score} / 5`);
+      if (ai) scoreParts.push(`AI ${ai.percent ?? Math.round(ai.total / ai.perfect * 100)} / 100`);
+      if (hu) scoreParts.push(`人评 ${Math.round(hu.score / 5 * 100)} / 100`);
       ps.push(para([{text: `第 ${round} 轮 · ${dirLabel} · ${scoreParts.join(' · ')}`, bold: true, size: 22}], {before: 100, after: 40}));
       if (ai) {
         if (ai.comment) ps.push(para([{text: 'AI 总评：', bold: true, size: 20, color: '595959'}, {text: ai.comment, size: 20, color: '595959'}], {after: 20}));
@@ -172,8 +171,10 @@ function buildScriptDocx(record) {
       if (hu) {
         if (hu.comment) ps.push(para([{text: '人工评语：', bold: true, size: 20, color: '595959'}, {text: hu.comment, size: 20, color: '595959'}], {after: 40}));
         if (ai) {
-          const delta = +(hu.score / 5 * ai.perfect - ai.total).toFixed(1);
-          ps.push(para([{text: `分差参考：`, bold: true, size: 20, color: '595959'}, {text: `人评折算 ${hu.score / 5 * ai.perfect} 分，与 AI 相差 ${delta > 0 ? '+' : ''}${delta} 分`, size: 20, color: '595959'}], {after: 80}));
+          const aiPct = ai.percent ?? Math.round(ai.total / ai.perfect * 100);
+          const huPct = Math.round(hu.score / 5 * 100);
+          const delta = huPct - aiPct;
+          ps.push(para([{text: `分差参考：`, bold: true, size: 20, color: '595959'}, {text: `人评 ${huPct} / 100，AI ${aiPct} / 100，相差 ${delta > 0 ? '+' : ''}${delta} 分`, size: 20, color: '595959'}], {after: 80}));
         }
       }
     }
@@ -183,13 +184,14 @@ function buildScriptDocx(record) {
   if (record.report) {
     ps.push(para([{text: '四、演练报告', bold: true, size: 28}], {before: 200}));
     if (record.report.totalAvg != null) {
-      ps.push(para([{text: `AI 场均 ${record.report.totalAvg} / 5，共 ${record.report.utterances} 句译文（量规满分 ${perfect}）`}], {after: 80}));
+      ps.push(para([{text: `AI 综合得分 ${record.report.overall} / 100（维度场均 ${record.report.totalAvg} / 5），共 ${record.report.utterances} 句译文`}], {after: 80}));
       for (const d of record.report.perDim || []) {
         ps.push(para([{text: `${d.group} · ${d.label}：`, size: 20}, {text: `${d.avg}`, bold: true, size: 20}], {after: 20}));
       }
     }
     if (record.report.human) {
-      ps.push(para([{text: `人工评分均分 ${record.report.human.avg} / 5，共 ${record.report.human.count} 句（人工评分模式未启用 AI 逐维打分）`}], {before: record.report.totalAvg != null ? 60 : 0, after: 80}));
+      const hPct = record.report.human.percent ?? Math.round(record.report.human.avg / 5 * 100);
+      ps.push(para([{text: `人工评分综合 ${hPct} / 100，共 ${record.report.human.count} 句（人工评分模式未启用 AI 逐维打分）`}], {before: record.report.totalAvg != null ? 60 : 0, after: 80}));
     }
     if ((record.report.keyPoints || []).length) {
       ps.push(para([{text: '关键语言服务要点', bold: true, size: 24}], {before: 120, after: 40}));

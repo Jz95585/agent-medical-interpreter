@@ -8,7 +8,7 @@ import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, ma
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
-import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES} from './pools.mjs';
+import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS} from './pools.mjs';
 
 const sessions = new Map(); // drill/m2 会话：sessionId → {state, pending}
 
@@ -114,14 +114,17 @@ function scoreReport(state) {
   const report = {
     utterances: state.scores.length,
     totalAvg: state.scores.length ? +(Object.values(avg).reduce((a, b) => a + b, 0) / dims.length).toFixed(2) : null,
+    overall: state.scores.length ? Math.round(Object.values(avg).reduce((a, b) => a + b, 0) / dims.length / 5 * 100) : null, // 百分制综合得分
     perDim: dims.map(d => ({...d, avg: avg[d.key]})),
     comments: state.scores.map(r => r.comment).filter(Boolean),
     keyPoints: state.scores.map(r => r.key_point).filter(Boolean),
   };
   if (state.humanScores?.length) {
+    const havg = state.humanScores.reduce((s, h) => s + h.score, 0) / state.humanScores.length;
     report.human = {
       count: state.humanScores.length,
-      avg: +(state.humanScores.reduce((s, h) => s + h.score, 0) / state.humanScores.length).toFixed(2),
+      avg: +havg.toFixed(2),
+      percent: Math.round(havg / 5 * 100), // 百分制
       items: state.humanScores,
     };
   }
@@ -156,7 +159,7 @@ async function runAuto(env, body, send, signal) {
     scenario: body.scenario || 'consult',
     interpreterType: listPersonas().some(p => p.id === body.interpreterType) ? body.interpreterType : 'professional',
     params: body.params || {},
-    maxRounds: Math.min(6, Math.max(1, Number(body.maxRounds) || 4)),
+    maxRounds: Math.min(30, Math.max(1, Number(body.maxRounds) || 30)),
     doctorLanguage: (body.params && body.params.doctorLanguage) || '中文',
   };
   const state = makeState(settings);
@@ -174,29 +177,31 @@ async function runAuto(env, body, send, signal) {
     state.round += 1;
     send({type: 'round', round: state.round});
 
-    // 医生 → 口译（医→患）→ 评分
+    // 医生 → 口译（医→患）→ 评分（终止轮的告别语也要翻译，保证对话记录完整）
     const doctor = await doctorTurn(env, state, signal);
     send({type: 'message', round: state.round, speaker: 'doctor', lang: settings.doctorLanguage, text: doctor.content});
+
+    if (doctor.content) {
+      const interp1 = await interpreterTurn(env, state, signal, 1);
+      send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: interp1.content});
+      const score1 = await judgeTurn(env, state, doctor.content, interp1.content, signal);
+      send({type: 'score', round: state.round, for: 'to_patient', score: score1});
+    }
     if (doctor.terminated) { stopped = 'doctor'; break; }
 
-    const interp1 = await interpreterTurn(env, state, signal, 1);
-    send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: interp1.content});
-
-    const score1 = await judgeTurn(env, state, doctor.content, interp1.content, signal);
-    send({type: 'score', round: state.round, for: 'to_patient', score: score1});
-    if (isTerminate(interp1.content)) { stopped = 'interpreter'; break; }
-
-    // 患者 → 口译（患→医）→ 评分
+    // 患者 → 口译（患→医）→ 评分（同上，告别语也要翻译）
     const patient = await patientTurn(env, state, signal);
     send({type: 'message', round: state.round, speaker: 'patient', lang: state.patientInfo.language, text: patient.content});
-    if (patient.terminated) { stopped = 'patient'; break; }
 
-    const interp2 = await interpreterTurn(env, state, signal, 2);
-    send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_doctor', lang: settings.doctorLanguage, text: interp2.content});
-
-    const score2 = await judgeTurn(env, state, patient.content, interp2.content, signal);
-    send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
-    if (isTerminate(interp2.content)) { stopped = 'interpreter'; break; }
+    let interp2Terminated = false;
+    if (patient.content) {
+      const interp2 = await interpreterTurn(env, state, signal, 2);
+      interp2Terminated = isTerminate(interp2.content);
+      send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_doctor', lang: settings.doctorLanguage, text: interp2.content});
+      const score2 = await judgeTurn(env, state, patient.content, interp2.content, signal);
+      send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
+    }
+    if (patient.terminated || interp2Terminated) { stopped = patient.terminated ? 'patient' : 'interpreter'; break; }
   }
 
   const report = scoreReport(state);
@@ -215,7 +220,7 @@ async function drillStart(env, body) {
     scoringMode: ['ai', 'human', 'dual'].includes(body.scoringMode) ? body.scoringMode : 'ai',
     params: body.params || {},
     doctorLanguage: (body.params && body.params.doctorLanguage) || '中文',
-    maxRounds: Math.min(20, Math.max(1, Number(body.maxRounds) || 20)),
+    maxRounds: Math.min(30, Math.max(1, Number(body.maxRounds) || 30)),
   };
   const state = makeState(settings);
   state.humanScores = [];
@@ -456,6 +461,7 @@ async function route(request, env) {
     return json({
       model: env.AMI_MODEL || null,
       dryRun: env.DRY_RUN === '1',
+      rubricPublic: env.RUBRIC_PUBLIC === '1', // 量规编辑器是否对访客开放（默认后台化）
       scenarios: listScenarios(),
       interpreterTypes: listPersonas(),
       paramOptions: {
@@ -470,6 +476,7 @@ async function route(request, env) {
         genders: GENDERS,
         departments: DEPARTMENTS,
         doctorLanguages: DOCTOR_LANGUAGES,
+        presets: PRESET_PATIENTS,
       },
     });
   }
@@ -479,12 +486,14 @@ async function route(request, env) {
   }
 
   if (routeName === 'POST /api/rubric/save') {
+    if (env.RUBRIC_PUBLIC !== '1') throw err('量规编辑已后台化（RUBRIC_PUBLIC=0），请通过服务器本地环境修改。', 403);
     const body = await request.json().catch(() => ({}));
     const saved = savePersona(body.persona, {personaNote: body.personaNote, dims: body.dims});
     return json({ok: true, saved});
   }
 
   if (routeName === 'POST /api/rubric/reset') {
+    if (env.RUBRIC_PUBLIC !== '1') throw err('量规编辑已后台化（RUBRIC_PUBLIC=0），请通过服务器本地环境修改。', 403);
     resetStore();
     return json({ok: true});
   }

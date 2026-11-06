@@ -92,6 +92,9 @@
         <input id="disease" list="diseaseList" value="肾结石">
         <datalist id="diseaseList"></datalist>
       </label>
+      <label class="field">标准病人预设（SP 病例库）
+        <select id="presetSelect"><option value="">— 选择后自动填充以下参数 —</option></select>
+      </label>
       <button id="randomBtn" class="ghost wfull" type="button">🎲 随机生成患者</button>
     </details>
 
@@ -123,8 +126,8 @@
       </select>
     </label>
 
-    <label class="field" id="roundsField">最大轮数（模式1）
-      <select id="maxRounds"><option>2</option><option selected>4</option><option>6</option></select>
+    <label class="field" id="roundsField">轮数上限（兜底，默认自然结束）
+      <select id="maxRounds"><option>2</option><option>4</option><option>6</option><option>10</option><option selected>30</option></select>
     </label>
 
     <button id="startBtn" class="primary">开始演练</button>
