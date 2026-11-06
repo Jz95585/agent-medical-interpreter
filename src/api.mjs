@@ -323,7 +323,7 @@ async function drillHint(env, body) {
   const targetLang = pending.target === 'to_patient' ? state.patientInfo.language : state.settings.doctorLanguage;
   state.hintUsed += 1;
   const reference = await genReference(env, state, pending.original, targetLang, undefined);
-  return json({reference, targetLang});
+  return json({reference: reference.reference, angles: reference, targetLang});
 }
 
 // 结束后的人工评分：逐句 1-5 分 + 评语，写入档案并重算报告
@@ -425,7 +425,7 @@ async function m2Hint(env, body) {
   if (sess.state.done) throw err('演练已结束。');
   sess.state.hintUsed += 1;
   const reference = await genM2Hint(env, sess.state, undefined);
-  return json({reference, targetLang: sess.state.patientInfo.language});
+  return json({reference: reference.reference, angles: reference, targetLang: sess.state.patientInfo.language});
 }
 
 async function m2Finish(env, body) {

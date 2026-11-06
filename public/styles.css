@@ -109,40 +109,51 @@ body {
 #rubricView .inputRow { margin-top: 8px; }
 #rubricStatus { min-height: 14px; }
 
-/* 舞台三栏 */
+/* 舞台：竖排对话时间线 */
 .stage {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
   min-height: calc(100vh - 140px);
 }
-.col {
+.chatStage {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   display: flex; flex-direction: column; overflow: hidden;
+  height: calc(100vh - 140px); min-height: 520px; /* 固定高度：消息多时 chatBody 内部滚动，否则 flex 子项会撑开容器 */
 }
+.chatHeads { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: #fbfcfd; }
+.chatHeads .colHead { border: 0; background: transparent; padding: 0; }
 .colHead {
-  padding: 8px 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 8px; background: #fbfcfd;
+  font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
 }
 .avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.blue { background: var(--blue); } .dot.green { background: var(--green); } .dot.orange { background: var(--orange); }
-.colBody { flex: 1; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
-.bubble {
-  padding: 9px 11px; border-radius: 10px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+.chatBody {
+  flex: 1; min-height: 0; padding: 14px 16px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
 }
-.bubble .tag { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+/* 历史话轮淡出：可滚动时顶部 72px 渐隐（.fading 由 JS 在内容超出可视区时启用） */
+.chatBody.fading {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 72px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 72px);
+}
+.msg { display: flex; gap: 9px; align-items: flex-start; max-width: 88%; }
+.msg.doctor { align-self: flex-start; }
+.msg.patient { align-self: flex-end; flex-direction: row-reverse; }
+.msg.interpreter { align-self: center; max-width: 76%; }
+.msgMain {
+  padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg .tag { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.msg.doctor .msgMain { background: var(--blue-soft); border-top-left-radius: 4px; }
+.msg.patient .msgMain { background: var(--orange-soft); border-top-right-radius: 4px; }
+.msg.interpreter .msgMain { background: var(--green-soft); }
+.msg.scored .msgMain { outline: 2px solid #f2c94c; }
 .speakBtn {
   float: right; margin: -2px 0 0 6px; padding: 0 3px; border: 0; background: transparent;
   cursor: pointer; font-size: 12px; opacity: .7;
 }
 .speakBtn:hover { opacity: 1; }
-.doctorCol .bubble { background: var(--blue-soft); }
-.patientCol .bubble { background: var(--orange-soft); }
-.interpCol .bubble { background: var(--green-soft); }
-.bubble.scored { outline: 2px solid #f2c94c; }
-.bubble .scoreChip {
-  display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px;
-  background: #fff; border: 1px solid var(--border); font-size: 11px; color: var(--muted);
-}
 .inputBox { border-top: 1px solid var(--border); padding: 10px 12px; background: #fbfcfd; }
 .inputHint { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 #translationInput {
@@ -177,6 +188,12 @@ body {
   background: #fffbf0; font-size: 12px; line-height: 1.55; color: var(--text);
 }
 .refBox .tag { color: var(--orange); font-size: 11px; display: block; margin-bottom: 3px; }
+.refBox .angleMain { font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+.refBox .angleRow { color: var(--muted); margin-top: 3px; }
+.refBox .angleRow b {
+  display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px;
+  background: #f6e7bd; color: #8a6d00; font-size: 11px; font-weight: 600;
+}
 .humanRow {
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;
 }
@@ -199,5 +216,6 @@ body {
 
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
-  .stage { grid-template-columns: 1fr; min-height: auto; }
+  .chatStage { height: auto; }
+  .chatBody { min-height: 40vh; max-height: 70vh; }
 }

@@ -158,6 +158,9 @@ async function init() {
     document.querySelectorAll('#rubricPersonaSeg .segBtn').forEach(b => b.disabled = true);
     $('#addDim').disabled = $('#saveRubric').disabled = $('#resetRubric').disabled = true;
   }
+
+  // 视口尺寸变化时重判历史淡出遮罩是否需要启用
+  window.addEventListener('resize', updateChatMask);
 }
 
 function showPersonaNote() {
@@ -213,7 +216,7 @@ function collectParams() {
 
 // ─── 通用 UI ───
 function clearCols() {
-  for (const id of ['doctorCol', 'interpCol', 'patientCol']) $('#' + id).innerHTML = '';
+  $('#chatCol').innerHTML = '';
   $('#scoreList').innerHTML = '<p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p>';
   $('#report').hidden = true;
   $('#refBox').hidden = true;
@@ -238,25 +241,59 @@ function resetStage() {
   $('#startBtn').disabled = false;
 }
 
+// 逐字流式输出：总时长 300ms~1.4s 自适应长度；元素被清场移除后自动停止
+function typeWriter(el, text) {
+  const dur = Math.min(1400, Math.max(300, text.length * 30));
+  const step = Math.max(1, Math.ceil(text.length / (dur / 16)));
+  let i = 0;
+  const timer = setInterval(() => {
+    if (!el.isConnected) { clearInterval(timer); return; }
+    i = Math.min(text.length, i + step);
+    el.textContent = text.slice(0, i);
+    $('#chatCol').scrollTop = 1e9;
+    if (i >= text.length) clearInterval(timer);
+  }, 16);
+}
+
+// 历史话轮淡出：仅当内容超出可视区（可滚动）时启用顶部渐隐遮罩，避免首条消息被误淡
+function updateChatMask() {
+  const el = $('#chatCol');
+  el.classList.toggle('fading', el.scrollHeight > el.clientHeight + 120);
+}
+
+// 竖排时间线消息：colId 仅用于推断角色（doctorCol/patientCol/interpCol），所有消息按发言顺序流入同一列
+const MSG_AVATARS = {doctor: 'av_doctor.svg', patient: 'av_patient.svg', interpreter: 'av_interpreter.svg'};
+function msgRole(colId) {
+  return colId === '#doctorCol' ? 'doctor' : colId === '#patientCol' ? 'patient' : 'interpreter';
+}
 function bubble(colId, tagText, text, extraClass = '', lang = '') {
+  const role = msgRole(colId);
   const div = document.createElement('div');
-  div.className = 'bubble ' + extraClass;
+  div.className = 'msg ' + role + (extraClass ? ' ' + extraClass : '');
+  const img = document.createElement('img');
+  img.className = 'avatar';
+  img.src = MSG_AVATARS[role];
+  img.alt = role;
+  const main = document.createElement('div');
+  main.className = 'msgMain';
   const tag = document.createElement('span');
   tag.className = 'tag';
   tag.textContent = tagText;
   const body = document.createElement('span');
-  body.textContent = text;
-  div.append(tag, body);
+  main.append(tag, body);
+  div.append(img, main);
   if (lang) {
     const btn = document.createElement('button');
     btn.className = 'speakBtn';
     btn.textContent = '🔊';
     btn.title = '朗读本条';
-    btn.onclick = (e) => { e.stopPropagation(); speak(text, lang); };
-    div.appendChild(btn);
+    btn.onclick = (e) => { e.stopPropagation(); speak(text, lang, role); };
+    main.appendChild(btn);
   }
-  $(colId).appendChild(div);
-  $(colId).scrollTop = 1e9;
+  $('#chatCol').appendChild(div);
+  $('#chatCol').scrollTop = 1e9;
+  typeWriter(body, text);
+  updateChatMask();
   return div;
 }
 
@@ -296,15 +333,68 @@ function pickVoice(langName) {
     || list[0];
 }
 
-function speak(text, lang) {
+// ─── TTS 速效优化：分句停顿 + 角色韵律 + 医疗数字/单位口语化 ───
+const NUM_EN = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+const NUM_TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+function numToEn(n) {
+  if (n < 20) return NUM_EN[n];
+  if (n < 100) { const t = Math.floor(n / 10), r = n % 10; return NUM_TENS[t] + (r ? '-' + NUM_EN[r] : ''); }
+  if (n < 1000) { const h = Math.floor(n / 100), r = n % 100; return NUM_EN[h] + ' hundred' + (r ? ' ' + numToEn(r) : ''); }
+  if (n <= 9999) { const k = Math.floor(n / 1000), r = n % 1000; return numToEn(k) + ' thousand' + (r ? (r < 100 ? ' and ' : ' ') + numToEn(r) : ''); }
+  return String(n);
+}
+// 医疗缩写展开（朗读层做，不动对话文本）
+const UNIT_EN = {mg: 'milligrams', ml: 'milliliters', μg: 'micrograms', mcg: 'micrograms', mmHg: 'millimeters of mercury', bpm: 'beats per minute', IU: 'international units', '°C': 'degrees Celsius'};
+const UNIT_ZH = {mg: '毫克', ml: '毫升', μg: '微克', mcg: '微克', mmHg: '毫米汞柱', bpm: '每分钟心跳', IU: '国际单位', '°C': '摄氏度'};
+function normalizeSpeech(text, isZh) {
+  const units = isZh ? UNIT_ZH : UNIT_EN;
+  let t = text.replace(/(\d+(?:\.\d+)?)\s*(mg|ml|μg|mcg|mmHg|bpm|IU|°C)\b/gi, (m, num, unit) => {
+    const key = Object.keys(units).find(k => k.toLowerCase() === unit.toLowerCase());
+    if (!key) return m;
+    const n = isZh ? num : (/^\d+$/.test(num) && Number(num) <= 9999 ? numToEn(Number(num)) : num);
+    return n + ' ' + units[key];
+  });
+  if (!isZh) {
+    t = t.replace(/(\d+)\.(\d+)/g, (m, a, b) => `${numToEn(Number(a))} point ${b.split('').map(d => NUM_EN[+d]).join(' ')}`);
+    t = t.replace(/(\d+)/g, m => Number(m) <= 9999 ? numToEn(Number(m)) : m);
+  }
+  return t;
+}
+
+// 按句级标点切分（保留标点），句间由播放器插入自然停顿——避免长文本一口气匀速念完的机械感
+function splitClauses(text) {
+  return text.match(/\S[^。！？；!?;]*[。！？；!?;]?/g) || [text];
+}
+
+let speakToken = 0, speakTimer = null;
+function speak(text, lang, role) {
   if (!('speechSynthesis' in window)) { setStatus('当前浏览器不支持语音合成'); return; }
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = LANG_TTS[lang] || (lang === '中文' ? 'zh-CN' : 'en-US');
-  const v = pickVoice(lang);
-  if (v) { u.voice = v; u.lang = v.lang; }
-  u.rate = 0.95;
-  speechSynthesis.speak(u);
+  clearTimeout(speakTimer);
+  const token = ++speakToken;
+  const isZh = lang === '中文';
+  const voice = pickVoice(lang);
+  // 角色韵律：医生沉稳偏慢、患者按人设性格微调、译员中性
+  const personality = $('#personality')?.value || '平和';
+  let rate = 0.95, pitch = 1;
+  if (role === 'doctor') { rate = 0.9; pitch = 0.95; }
+  else if (role === 'patient') {
+    rate = personality === '急躁' ? 1.08 : personality === '焦虑' ? 1.02 : 0.98;
+    pitch = personality === '焦虑' ? 1.1 : personality === '开朗' ? 1.05 : 1;
+  }
+  const parts = splitClauses(normalizeSpeech(text, isZh));
+  let i = 0;
+  const next = () => {
+    if (token !== speakToken || i >= parts.length) return;
+    const u = new SpeechSynthesisUtterance(parts[i++]);
+    u.lang = voice?.lang || LANG_TTS[lang] || (isZh ? 'zh-CN' : 'en-US');
+    if (voice) u.voice = voice;
+    u.rate = rate;
+    u.pitch = pitch;
+    u.onend = () => { speakTimer = setTimeout(next, isZh ? 180 : 140); };
+    speechSynthesis.speak(u);
+  };
+  next();
 }
 
 function setStatus(text) { $('#statusLine').textContent = text; }
@@ -485,7 +575,7 @@ function addScoreCard(score, label) {
   card.querySelector('.comment').textContent = score.comment || '';
   card.querySelector('.kp').textContent = score.key_point ? '要点：' + score.key_point : '';
   list.prepend(card);
-  const bubbles = document.querySelectorAll('#interpCol .bubble');
+  const bubbles = document.querySelectorAll('#chatCol .msg.interpreter');
   if (bubbles.length) bubbles[bubbles.length - 1].classList.add('scored');
 }
 
@@ -561,6 +651,17 @@ async function submitHumanScores() {
   $('#humanBox').hidden = true;
 }
 
+// 参考建议渲染：主参考译文 + 术语/句型/医学/流程四角度
+function renderHint(box, data, tip) {
+  const a = data.angles || {};
+  const rows = [['术语', a.terminology], ['句型', a.idiom], ['医学', a.medical], ['流程', a.workflow]]
+    .filter(x => x[1])
+    .map(([k, v]) => `<div class="angleRow"><b>${k}</b>${v}</div>`).join('');
+  box.innerHTML = `<span class="tag">参考建议（${data.targetLang}，${tip}）</span>` +
+    `<div class="angleMain">${data.reference}</div>` + rows;
+  box.hidden = false;
+}
+
 // ─── 参考建议（卡住时给出当下应当说的译文）───
 async function askHint() {
   if (!state.sessionId) return;
@@ -572,8 +673,7 @@ async function askHint() {
     });
     const data = await resp.json();
     if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
-    $('#refBox').innerHTML = `<span class="tag">参考建议（${data.targetLang}，正式口译中应先尝试自己翻译）</span>${data.reference}`;
-    $('#refBox').hidden = false;
+    renderHint($('#refBox'), data, '正式口译中应先尝试自己翻译');
   } finally {
     $('#hintBtn').disabled = false;
   }
@@ -644,8 +744,7 @@ async function askHintM2() {
     });
     const data = await resp.json();
     if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
-    $('#refBoxM2').innerHTML = `<span class="tag">参考建议（${data.targetLang}，建议先自己尝试再参考）</span>${data.reference}`;
-    $('#refBoxM2').hidden = false;
+    renderHint($('#refBoxM2'), data, '建议先自己尝试再参考');
   } finally {
     $('#hintBtnM2').disabled = false;
   }

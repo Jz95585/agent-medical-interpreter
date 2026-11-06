@@ -22,8 +22,20 @@ const DRY_SAMPLES = {
   patient: 'Hello doctor, my name is Olivia Martin. I have been having blood in my urine without pain, and I need to go to the toilet very often. It is very uncomfortable.',
   patient_end: 'Thank you doctor, I have no more questions. I will follow your treatment plan. TERMINATE',
   interpreter: 'Hello, I am the interpreter. May I know your name? Please have a seat.',
-  hint: 'Hello, I am the interpreter. Dr. Zhang would like to know your name. Please have a seat.',
-  m2_hint: 'Hello, I am Dr. Zhang. What seems to be the problem today?',
+  hint: JSON.stringify({
+    reference: 'Hello, I am the interpreter. Dr. Zhang would like to know your name. Please have a seat.',
+    terminology: '',
+    idiom: 'May I know… / Would you like to… 等礼貌问句式',
+    medical: '',
+    workflow: '问诊开场的问候环节，患者回应后进入主诉采集',
+  }),
+  m2_hint: JSON.stringify({
+    reference: 'Hello, I am Dr. Zhang. What seems to be the problem today?',
+    terminology: '',
+    idiom: 'What brings you in today? 是门诊开场的地道问法',
+    medical: '',
+    workflow: '医生问候与自我介绍后引导患者陈述主诉',
+  }),
   judge_medstaff: JSON.stringify({
     lang_accuracy: 4, terminology_use: 4, information_completeness: 4,
     explanation_confirmation: 3, empathy_comfort: 4, turn_management: 4,

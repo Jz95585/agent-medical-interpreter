@@ -335,15 +335,32 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   return result;
 }
 
-// ─── 参考建议：用户卡住时给出当下应当说的译文（设计稿模式3）───
+// ─── 参考建议：用户卡住时给出当下应当说的译文 + 四角度讲解（设计稿模式3）───
 async function genReference(env, state, original, targetLang, signal) {
-  const prompt = `在医疗口译场景中，口译员需要把下面这句话翻译成${targetLang}。
+  const r = await callModel(env, [
+    {role: 'user', content: `医疗口译场景，口译员需要把下面这句话翻译成${targetLang}。
 原话：${original}
-请给出参考译文：第一人称、口语自然、信息完整，符合医疗口译规范（不添加解释、语气说明或额外内容）。
-只输出参考译文本身。`;
-  return (await callModel(env, [
-    {role: 'user', content: prompt},
-  ], {max: 300, temperature: 0.3, tag: 'hint', signal})).message.trim();
+请从四个角度提供参考建议，输出严格 JSON：
+- reference: 参考译文（第一人称、口语自然、信息完整，符合医疗口译规范，不添加解释）
+- terminology: 本句中实际出现的医学术语/关键词的规范${targetLang}表达；本句没有医学术语时输出空字符串
+- idiom: 可复用的${targetLang}表达句型或更地道的说法（基于本句实际用词）；没有可提炼的句型时输出空字符串
+- medical: 仅当本句涉及具体医学内容（症状、疾病、检查、用药等）时给出理解提示帮助避免误译；问候、寒暄等无医学内容时输出空字符串，不要套用通用沟通话术
+- workflow: 这句话在问诊/诊疗流程中的作用与前后衔接；没有流程意义时输出空字符串
+严格禁止：各角度只写与本句直接相关的内容，宁可留空也不要用泛泛的套话填充。只输出 JSON，不要额外文字。`},
+  ], {json: true, max: 600, temperature: 0.3, tag: 'hint', signal});
+  try {
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return {
+      reference: String(t.reference || '').trim(),
+      terminology: String(t.terminology || ''),
+      idiom: String(t.idiom || ''),
+      medical: String(t.medical || ''),
+      workflow: String(t.workflow || ''),
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return {reference: r.message, terminology: '', idiom: '', medical: '', workflow: ''}; // 解析失败时退化为单句建议
+  }
 }
 
 // ─── 剧本讲解生成（设计稿：医学知识/诊疗流程/专业术语/语言表达难点）───
@@ -436,8 +453,27 @@ async function genM2Hint(env, state, signal) {
 患者背景：${JSON.stringify({country: state.patientInfo.country, disease: state.patientInfo.disease_info.disease_type})}
 对话至今：${JSON.stringify(context)}
 
-请给出医生**当下应该说出的下一句话**（${pl}）：符合${state.doctor.roleLabel}身份与场景进度，自然口语，只输出这一句话本身，不要任何解释。`;
-  return (await callModel(env, [{role: 'user', content: prompt}], {max: 300, temperature: 0.4, tag: 'm2_hint', signal})).message.trim();
+请从四个角度给出医生**当下应该说出的下一句话**的建议，输出严格 JSON：
+- reference: 医生当下应当说出的${pl}（符合${state.doctor.roleLabel}身份与场景进度，自然口语）
+- terminology: 本句中会出现的医学术语/关键词的规范${pl}表达；本句没有医学术语时输出空字符串
+- idiom: 可复用的${pl}表达句型或更地道的说法（基于本句实际用词）；没有可提炼的句型时输出空字符串
+- medical: 仅当本句涉及具体医学内容（症状、疾病、检查、用药等）时给出理解提示；问候等无医学内容时输出空字符串，不要套用通用沟通话术
+- workflow: 这句话在问诊/诊疗流程中的作用与前后衔接；没有流程意义时输出空字符串
+严格禁止：各角度只写与本句直接相关的内容，宁可留空也不要用泛泛的套话填充。只输出 JSON，不要额外文字。`;
+  try {
+    const r = await callModel(env, [{role: 'user', content: prompt}], {json: true, max: 600, temperature: 0.4, tag: 'm2_hint', signal});
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return {
+      reference: String(t.reference || '').trim(),
+      terminology: String(t.terminology || ''),
+      idiom: String(t.idiom || ''),
+      medical: String(t.medical || ''),
+      workflow: String(t.workflow || ''),
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return {reference: '', terminology: '', idiom: '', medical: '', workflow: ''};
+  }
 }
 
 // ─── 管理智能体：终止判定（移植 ManagerAgent.check_terminate，容错版，终止条件随场景）───

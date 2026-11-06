@@ -134,39 +134,33 @@
     <p id="statusLine" class="status"></p>
   </aside>
 
-  <!-- 中：三栏对话 -->
-  <section class="stage">
-    <div class="col doctorCol">
+  <!-- 中：竖排对话时间线（按发言顺序流式排列，头像+角色标签区分说话人） -->
+  <section class="stage chatStage">
+    <div class="chatHeads">
       <div class="colHead"><img class="avatar" id="doctorAvatar" src="av_doctor.svg" alt="医生头像"><span id="doctorRoleLabel">医生</span> · <span id="doctorLangLabel">中文</span></div>
-      <div class="colBody" id="doctorCol"></div>
-      <div class="inputBox" id="inputBoxM2" hidden>
-        <div class="inputHint" id="inputHintM2"></div>
-        <div id="refBoxM2" class="refBox" hidden></div>
-        <textarea id="utteranceInput" rows="3" placeholder="直接用患者的语言问诊…"></textarea>
-        <div class="inputRow">
-          <button id="hintBtnM2" class="ghost" title="卡住了？让 AI 给出当下应当说的英文">💡 参考建议</button>
-          <button id="finishBtnM2" class="ghost" title="提前结束并生成报告">结束演练</button>
-          <button id="submitBtnM2" class="primary">发送</button>
-        </div>
-      </div>
-    </div>
-    <div class="col interpCol">
       <div class="colHead"><img class="avatar" src="av_interpreter.svg" alt="口译员头像"><span id="personaLabel">职业医疗口译员</span> · <span id="langPair"></span></div>
-      <div class="colBody" id="interpCol"></div>
-      <div class="inputBox" id="inputBox" hidden>
-        <div class="inputHint" id="inputHint"></div>
-        <div id="refBox" class="refBox" hidden></div>
-        <textarea id="translationInput" rows="3" placeholder="在此输入你的译文…"></textarea>
-        <div class="inputRow">
-          <button id="hintBtn" class="ghost" title="卡住了？让 AI 给出当下应当说的译文">💡 参考建议</button>
-          <button id="speechBtn" class="ghost" title="语音输入（浏览器 Web Speech API，可用性视浏览器而定）">🎤 语音</button>
-          <button id="submitBtn" class="primary">提交译文</button>
-        </div>
+      <div class="colHead"><img class="avatar" src="av_patient.svg" alt="患者头像"><span>患者</span> · <span id="patientLangLabel">英文</span></div>
+    </div>
+    <div class="chatBody" id="chatCol"></div>
+    <div class="inputBox" id="inputBox" hidden>
+      <div class="inputHint" id="inputHint"></div>
+      <div id="refBox" class="refBox" hidden></div>
+      <textarea id="translationInput" rows="3" placeholder="在此输入你的译文…"></textarea>
+      <div class="inputRow">
+        <button id="hintBtn" class="ghost" title="卡住了？让 AI 给出当下应当说的译文">💡 参考建议</button>
+        <button id="speechBtn" class="ghost" title="语音输入（浏览器 Web Speech API，可用性视浏览器而定）">🎤 语音</button>
+        <button id="submitBtn" class="primary">提交译文</button>
       </div>
     </div>
-    <div class="col patientCol">
-      <div class="colHead"><img class="avatar" src="av_patient.svg" alt="患者头像"><span>患者</span> · <span id="patientLangLabel">英文</span></div>
-      <div class="colBody" id="patientCol"></div>
+    <div class="inputBox" id="inputBoxM2" hidden>
+      <div class="inputHint" id="inputHintM2"></div>
+      <div id="refBoxM2" class="refBox" hidden></div>
+      <textarea id="utteranceInput" rows="3" placeholder="直接用患者的语言问诊…"></textarea>
+      <div class="inputRow">
+        <button id="hintBtnM2" class="ghost" title="卡住了？让 AI 给出当下应当说的英文">💡 参考建议</button>
+        <button id="finishBtnM2" class="ghost" title="提前结束并生成报告">结束演练</button>
+        <button id="submitBtnM2" class="primary">发送</button>
+      </div>
     </div>
   </section>
 
