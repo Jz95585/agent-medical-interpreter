@@ -99,7 +99,7 @@ function buildScriptDocx(record) {
   const scenarioNames = {consult: '门诊常规诊治', followup: '复诊', appointment: '预约挂号', checkup: '检查检验咨询', pretravel: '行前注意事项'};
   const scenarioName = scenarioNames[s.scenario] || s.scenario || '';
   const personaName = (record.report && record.report.perDim && s.interpreterType) ? '' : '';
-  const interpreterName = '王译员';
+  const interpreterName = record.interpreter?.name || '口译员';
   const dims = (record.report && record.report.perDim) || [];
 
   const ps = [];
@@ -110,8 +110,12 @@ function buildScriptDocx(record) {
 
   // 一、演练设定
   ps.push(para([{text: '一、演练设定', bold: true, size: 28}], {before: 120}));
+  // 人名与角色名相同（如"前台护士"）时不再重复显示
+  const docDesc = doc.name && doc.name !== record.doctor.roleLabel
+    ? `${doc.name}（${doc.specialization}）`
+    : doc.specialization;
   ps.push(para([
-    {text: `${record.doctor.roleLabel || '医生'}：`, bold: true}, {text: `${doc.name}（${doc.specialization}），使用${s.doctorLanguage || '中文'}`},
+    {text: `${record.doctor.roleLabel || '医生'}：`, bold: true}, {text: `${docDesc}，使用${s.doctorLanguage || '中文'}`},
   ]));
   ps.push(para([
     {text: '口译员：', bold: true}, {text: `${interpreterName}（${personaLabelOf(s.interpreterType)}），${s.doctorLanguage || '中文'} ↔ ${pi.language || '英文'} 双向口译${s.mode === 'drill' ? '（译文由用户扮演者提供）' : ''}`},
@@ -152,7 +156,7 @@ function buildScriptDocx(record) {
     let half = 0;
     const humanByHalf = new Map((record.humanScores || []).map(h => [h.half, h]));
     const maxHalf = Math.max((record.scores || []).length, (record.humanScores || []).length);
-    const rlShort = record.doctor.roleLabel === '前台接待员' ? '前台' : (record.doctor.roleLabel || '医生');
+    const rlShort = record.doctor.roleLabel === '前台护士' ? '前台' : (record.doctor.roleLabel || '医生');
     for (let h = 1; h <= maxHalf; h++) {
       half = h;
       const ai = (record.scores || [])[h - 1];

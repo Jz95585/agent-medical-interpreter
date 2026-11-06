@@ -63,7 +63,7 @@ function makeState(settings) {
     settings,
     doctor: {
       name: sc.doctorName || '张医生',
-      roleLabel: sc.id === 'appointment' ? '前台接待员' : '医生',
+      roleLabel: sc.roleLabel || '医生', // 单一来源：跟随场景配置（前台护士/医生）
       specialization: sc.department
         ? (settings.params && settings.params.department) || '泌尿外科'
         : '国际门诊前台',

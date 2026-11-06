@@ -67,8 +67,8 @@ const SCENARIOS = {
     id: 'appointment',
     name: '预约挂号',
     implemented: true,
-    roleLabel: '前台接待员',
-    doctorName: '李前台',
+    roleLabel: '前台护士',
+    doctorName: '前台护士',
     department: false,         // 预约过程中由接待员推荐科室，不用配置面板科室
     msdSearch: false,          // 无诊断内容，不查 MSD
     description: '接听/迎接 → 确认需求与科室 → 商定时间 → 材料、保险与直付 → 就诊指引告别',

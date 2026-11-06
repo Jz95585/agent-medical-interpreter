@@ -480,7 +480,7 @@ AI 医生与 AI 患者轮流说话，用户逐句提交译文。
    |---|---|
    | `id` / `name` | 内部标识与显示名 |
    | `implemented` | 为 `false` 时前端下拉框置灰 |
-   | `roleLabel` | 对方角色名（医生 / 前台接待员…） |
+   | `roleLabel` | 对方角色名（医生 / 前台护士…） |
    | `doctorName` / `department` | 默认人名与是否使用配置面板的科室 |
    | `msdSearch` | 是否检索 MSD 知识库 |
    | `doctorRoleText` | 系统提示词主体，可用 `{dept}` `{name}` 占位 |
@@ -495,7 +495,7 @@ AI 医生与 AI 患者轮流说话，用户逐句提交译文。
 3. 两处硬编码需要同步：
 
    - `src/docx.mjs:99` 的 `scenarioNames` 映射，漏了的话 docx 标题会直接显示场景 id
-   - `public/app.js:300` 的头像判定只特判了 `前台接待员`，新角色类型需要在这里补分支
+   - `public/app.js` 的头像判定只特判了 `前台护士`，新角色类型需要在这里补分支
 
 ### 新增或修改评估维度
 

@@ -416,11 +416,11 @@ function applyRoleUI(cur) {
   $('#doctorRoleLabel').textContent = rl;
   $('#doctorSummary').textContent = rl + '设定';
   $('#departmentField').style.display = cur?.department === false ? 'none' : '';
-  $('#doctorAvatar').src = rl === '前台接待员' ? 'av_receptionist.svg' : 'av_doctor.svg';
+  $('#doctorAvatar').src = rl === '前台护士' ? 'av_receptionist.svg' : 'av_doctor.svg';
 }
 function dirLabel(dir) {
   const rl = roleLabel();
-  const short = rl === '前台接待员' ? '前台' : rl;
+  const short = rl === '前台护士' ? '前台' : rl;
   return dir === 'to_patient' ? `${short}→患` : `患→${short}`;
 }
 
