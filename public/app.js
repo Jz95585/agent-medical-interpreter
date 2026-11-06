@@ -112,7 +112,8 @@ async function init() {
     };
   });
   $('#submitBtn').onclick = submitTranslation;
-  $('#speechBtn').onclick = speechInput;
+  $('#speechBtn').onclick = () => speechInput('#speechBtn', '#translationInput');
+  $('#speechBtnM2').onclick = () => speechInput('#speechBtnM2', '#utteranceInput');
   $('#hintBtn').onclick = askHint;
   $('#submitBtnM2').onclick = submitM2;
   $('#hintBtnM2').onclick = askHintM2;
@@ -287,7 +288,7 @@ function bubble(colId, tagText, text, extraClass = '', lang = '') {
     btn.className = 'speakBtn';
     btn.textContent = '🔊';
     btn.title = '朗读本条';
-    btn.onclick = (e) => { e.stopPropagation(); speak(text, lang, role); };
+    btn.onclick = (e) => { e.stopPropagation(); speak(text, lang, role, role === 'patient' ? $('#gender').value : ''); };
     main.appendChild(btn);
   }
   $('#chatCol').appendChild(div);
@@ -366,15 +367,45 @@ function splitClauses(text) {
   return text.match(/\S[^。！？；!?;]*[。！？；!?;]?/g) || [text];
 }
 
-let speakToken = 0, speakTimer = null;
-function speak(text, lang, role) {
+let speakToken = 0, speakTimer = null, speakAudio = null, speakAbort = null;
+
+// 朗读：中/英/日/韩优先走服务端 CosyVoice2（情感自然）；法/西或服务失败回退浏览器合成
+async function speak(text, lang, role, gender) {
   if (!('speechSynthesis' in window)) { setStatus('当前浏览器不支持语音合成'); return; }
   speechSynthesis.cancel();
   clearTimeout(speakTimer);
-  const token = ++speakToken;
+  speakToken++;
+  const token = speakToken;
+  if (['中文', '英文', '英语', '日文', '韩文'].includes(lang)) {
+    try {
+      if (speakAudio) { speakAudio.pause(); speakAudio = null; }
+      if (speakAbort) speakAbort.abort();
+      speakAbort = new AbortController();
+      const resp = await fetch('/api/tts', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text, lang, role, gender}),
+        signal: speakAbort.signal,
+      });
+      if (!resp.ok) throw new Error(await respError(resp));
+      const blob = await resp.blob();
+      if (token !== speakToken) return; // 已被新的朗读打断
+      speakAudio = new Audio(URL.createObjectURL(blob));
+      await speakAudio.play();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      if (token !== speakToken) return;
+      setStatus('服务端朗读失败，回退浏览器合成：' + e.message);
+    }
+  }
+  browserSpeak(text, lang, role);
+}
+
+// 浏览器合成回退：分句停顿 + 角色韵律 + 数字口语化
+function browserSpeak(text, lang, role) {
+  const token = speakToken;
   const isZh = lang === '中文';
   const voice = pickVoice(lang);
-  // 角色韵律：医生沉稳偏慢、患者按人设性格微调、译员中性
   const personality = $('#personality')?.value || '平和';
   let rate = 0.95, pitch = 1;
   if (role === 'doctor') { rate = 0.9; pitch = 0.95; }
@@ -866,21 +897,50 @@ async function saveRubric() {
 
 function rubricStatus(text) { $('#rubricStatus').textContent = text; }
 
-// ─── 语音输入（Web Speech API 占位实现，对应设计稿语音识别模块）───
-function speechInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { setStatus('当前浏览器不支持 Web Speech API，请直接键入译文。'); return; }
-  const targetLang = /[\u4e00-\u9fff]/.test(state.pending?.original || '') ? 'en-US' : 'zh-CN';
-  const rec = new SR();
-  rec.lang = targetLang;
-  rec.interimResults = false;
-  setStatus('正在聆听…（' + (targetLang === 'en-US' ? '说英文' : '说中文') + '）');
-  rec.onresult = (e) => {
-    $('#translationInput').value += e.results[0][0].transcript;
-    setStatus('语音已转入，请核对后提交。');
+// ─── 语音输入：MediaRecorder 录音 → 服务端 SenseVoice 转写（#12，替代不可靠的 Web Speech API）───
+let recState = null; // {recorder, stream, chunks}
+async function speechInput(btnId, inputSel) {
+  const btn = $(btnId);
+  // 录音中：再次点击 → 停止并识别
+  if (recState) {
+    recState.recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    setStatus('当前浏览器不支持录音，请直接键入。'); return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    setStatus('无法访问麦克风：' + e.message); return;
+  }
+  const chunks = [];
+  const recorder = new MediaRecorder(stream);
+  recState = {recorder, stream, chunks};
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    recState = null;
+    btn.textContent = '🎤 语音';
+    btn.disabled = true;
+    const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'rec.webm');
+      const resp = await fetch('/api/asr', {method: 'POST', body: fd});
+      const data = await resp.json();
+      if (!resp.ok) { setStatus('语音识别失败：' + (data.error || resp.status)); return; }
+      if (!data.text) { setStatus('没有识别到内容，请再试一次。'); return; }
+      $(inputSel).value = ($(inputSel).value ? $(inputSel).value + ' ' : '') + data.text;
+      setStatus('语音已转入，请核对后提交。');
+    } finally {
+      btn.disabled = false;
+    }
   };
-  rec.onerror = () => setStatus('语音识别失败，请直接键入。');
-  rec.start();
+  recorder.start();
+  btn.textContent = '⏹ 停止';
+  setStatus('录音中…说完后点「停止」。');
 }
 
 // ─── 启动 ───

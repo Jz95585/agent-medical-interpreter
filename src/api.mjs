@@ -8,6 +8,7 @@ import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, ma
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
+import * as audio from './audio.mjs';
 import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS} from './pools.mjs';
 
 const sessions = new Map(); // drill/m2 会话：sessionId → {state, pending}
@@ -497,6 +498,20 @@ async function route(request, env) {
     if (env.RUBRIC_PUBLIC !== '1') throw err('量规编辑已后台化（RUBRIC_PUBLIC=0），请通过服务器本地环境修改。', 403);
     resetStore();
     return json({ok: true});
+  }
+
+  if (routeName === 'POST /api/tts') {
+    // 语音合成：中英日韩走 CosyVoice2，返回 mp3 二进制（法/西由前端回退浏览器合成）
+    const body = await request.json().catch(() => ({}));
+    const buf = await audio.tts(env, body);
+    return new Response(buf, {headers: {'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store'}});
+  }
+
+  if (routeName === 'POST /api/asr') {
+    // 语音识别：录音文件转发 SenseVoice
+    const fd = await request.formData();
+    const text = await audio.asr(env, fd);
+    return json({text});
   }
 
   if (routeName === 'POST /api/auto') {
