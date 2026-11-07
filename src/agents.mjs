@@ -21,18 +21,33 @@ function splitList(text) {
   return String(text || '').split(/[,，、;；\n]+/).map(s => s.trim()).filter(Boolean);
 }
 
-// ─── 语言方向双保险：按目标语言做中文字符占比校验，不符则带纠正提示重试一次 ───
-// （治"译员把方向译反/混语言"：中文译文 CJK 占比应≥30%，拉丁语言译文 CJK 占比应≤5%；
-//   日文/韩文因汉字词占比天然波动，不做占比校验）
+// ─── 语言方向双保险：按目标语言的书写系统做占比校验，不符则带纠正提示重试一次 ───
+// 中文看汉字占比，日文看假名，韩文看谚文，拉丁语系看非拉丁字符占比。
+// 局限：纯汉字的日文短语（如「腎結石」）会被误判并触发一次重试。
 function cjkRatio(s) {
   const t = String(s || '').replace(/\s/g, '');
   if (!t.length) return 0;
   return (t.match(/[\u4e00-\u9fff]/g) || []).length / t.length;
 }
+const KANA_RE = /[぀-ヿㇰ-ㇿ]/g;
+const HANGUL_RE = /[ᄀ-ᇿ㄰-㆏가-힯]/g;
+
+function charRatio(s, re) {
+  const t = String(s || '').replace(/\s/g, '');
+  if (!t.length) return 0;
+  return (t.match(re) || []).length / t.length;
+}
+const kanaRatio = s => charRatio(s, KANA_RE);
+const hangulRatio = s => charRatio(s, HANGUL_RE);
+
 function langMismatch(text, lang) {
-  if (lang === '中文') return cjkRatio(text) < 0.3;
-  if (lang === '日文' || lang === '韩文') return false;
-  return cjkRatio(text) > 0.05;
+  const cjk = cjkRatio(text);
+  const kana = kanaRatio(text);
+  const hangul = hangulRatio(text);
+  if (lang === '中文') return cjk < 0.3 || kana >= 0.05 || hangul >= 0.05;
+  if (lang === '日文') return kana < 0.05 || hangul >= 0.05;
+  if (lang === '韩文') return hangul < 0.2;
+  return cjk > 0.05 || kana >= 0.02 || hangul >= 0.02;
 }
 async function callWithLangCheck(env, system, prompt, expectedLang, opts, signal) {
   const r = (await callModel(env, [
@@ -664,4 +679,4 @@ ${JSON.stringify(view)}
   return false; // 容错：两次异常/非法回复按继续处理，由外层 MAX_ROUNDS 兜底
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch};
