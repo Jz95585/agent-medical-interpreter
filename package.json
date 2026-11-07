@@ -5,7 +5,8 @@
   "description": "Agent Medical Interpreter · 医疗口译多智能体 Demo（模式1自动演练 + 模式3用户扮演译员）",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "coverage": "node scripts/coverage.mjs"
   },
   "engines": {
     "node": ">=22"

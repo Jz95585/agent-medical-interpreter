@@ -4,7 +4,7 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback} from './agents.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
@@ -75,6 +75,7 @@ function makeState(settings) {
     humanScores: [],
     hintUsed: 0,
     sqlQueries: [],
+    msdLevel: null,   // 知识库覆盖级别：disease / related / none
     round: 0,
     done: false,
   };
@@ -104,6 +105,7 @@ function recordOf(state, extra = {}) {
     humanScores: state.humanScores || [],
     hintUsed: state.hintUsed || 0,
     msdRefs: state.msdRefs || [],
+    msdLevel: state.msdLevel || null,
     consumerPlain: state.consumerPlain || '',
     teaching: state.teaching || null,
     sqlQueries: state.sqlQueries,
@@ -363,6 +365,7 @@ async function m2Start(env, body) {
   const settings = {
     mode: 'm2',
     scenario: body.scenario || 'consult',
+    interpreterType: 'medstaff', // 报告按「医护英语沟通」量规汇总，否则会回落到 professional 维度导致全 0
     params: body.params || {},
     maxRounds: Math.min(20, Math.max(1, Number(body.maxRounds) || 12)),
   };
@@ -417,12 +420,19 @@ async function m2Turn(env, body) {
   if (state.done) {
     state.round = sess.half;
     state.teaching = await genTeaching(env, state, undefined);
+    result.feedback = await genDoctorFeedback(env, state, undefined).catch(() => null);
+    result.utterances = m2Utterances(state);
     result.report = scoreReport(state);
     result.saved = await persist('m2', state, {report: result.report}).catch(() => null);
     result.exportId = archiveRecord('m2', state, {report: result.report});
     sessions.delete(body.sessionId);
   }
   return json(result);
+}
+
+// 模式2 中医生（用户）的逐句发言，供反馈对照展示
+function m2Utterances(state) {
+  return state.log.filter(e => e.role === 'doctor').map((e, i) => ({half: i + 1, text: e.content}));
 }
 
 async function m2Hint(env, body) {
@@ -444,11 +454,12 @@ async function m2Finish(env, body) {
   state.done = true;
   state.round = sess.half;
   state.teaching = await genTeaching(env, state, undefined);
+  const feedback = await genDoctorFeedback(env, state, undefined).catch(() => null);
   const report = scoreReport(state);
   const saved = await persist('m2', state, {report}).catch(() => null);
   const exportId = archiveRecord('m2', state, {report});
   sessions.delete(body.sessionId);
-  return json({ok: true, report, saved, exportId});
+  return json({ok: true, report, feedback, utterances: m2Utterances(state), saved, exportId});
 }
 
 // ─── 路由入口 ───
