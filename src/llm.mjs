@@ -64,6 +64,12 @@ const DRY_SAMPLES = {
       {point: '术语口语化不足', advice: '向患者复述病情时优先使用患者能听懂的表达，术语留给医生侧', example: 'hematuria 可译作 blood in your urine'},
     ],
   }),
+  doctor_feedback: JSON.stringify({
+    references: [{half: 1, reference: "Hello, I'm Dr. Zhang. What brings you in today?"}],
+    plan: [
+      {point: '开场缺少自我介绍', advice: '先说明姓名与身份，再询问主诉', example: "I'm Dr. Zhang. What brings you in today?"},
+    ],
+  }),
   consumer: '肾结石就是肾脏里长了小石头，可能引起腰部绞痛、血尿。',
   judge: JSON.stringify({
     accuracy_medical_knowledge: 4, accuracy_information_integrity: 4,

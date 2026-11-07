@@ -567,7 +567,7 @@ async function submitTranslation() {
       setStatus(`演练结束：${who}终止了对话。`);
       state.lastPairs = data.pairs || [];
       renderReport(data.report);
-      renderFeedback(data.feedback);
+      renderFeedback(data.feedback, state.lastPairs, 'drill');
       showExport(data.exportId);
       state.sessionId = null;
       $('#inputBox').hidden = true;
@@ -611,18 +611,23 @@ function addScoreCard(score, label) {
   if (bubbles.length) bubbles[bubbles.length - 1].classList.add('scored');
 }
 
-// 个性化反馈（#3）：逐句参考译文对照 + 提升方案
-function renderFeedback(fb) {
+// 个性化反馈（#3）：逐句对照 + 提升方案；kind 区分模式3 译文与模式2 医生表达
+function renderFeedback(fb, pairs, kind = 'drill') {
   const box = $('#feedbackBox');
   if (!fb || (!fb.references?.length && !fb.plan?.length)) { box.hidden = true; return; }
+  const list = pairs || [];
   const refs = (fb.references || []).map(r => {
-    const p = (state.lastPairs || []).find(x => x.half === r.half);
+    const p = list.find(x => x.half === r.half);
     if (!p) return '';
+    if (kind === 'm2') {
+      return `<div class="fbRef"><b>第${r.half}句</b>　我的表达：${p.text}<br><span class="refLine">参考表达：${r.reference}</span></div>`;
+    }
     return `<div class="fbRef"><b>第${r.half}句</b>　原话：${p.original}<br>我的译文：${p.translated}<br><span class="refLine">参考译文：${r.reference}</span></div>`;
   }).join('');
   const plan = (fb.plan || []).map(x =>
     `<li><b>${x.point}</b>：${x.advice}${x.example ? `<br><span class="refLine">示例：${x.example}</span>` : ''}</li>`).join('');
-  box.innerHTML = `<h4>逐句参考译文对照</h4>${refs}<h4>个性化提升方案</h4><ul>${plan || '<li>—</li>'}</ul>`;
+  const title = kind === 'm2' ? '逐句表达对照' : '逐句参考译文对照';
+  box.innerHTML = `<h4>${title}</h4>${refs}<h4>个性化提升方案</h4><ul>${plan || '<li>—</li>'}</ul>`;
   box.hidden = false;
 }
 
@@ -766,7 +771,9 @@ async function submitM2() {
     if (data.finished) {
       const who = data.finished.reason === 'patient_terminate' ? '患者终止' : '达到句数上限';
       setStatus(`演练结束（${who}）`);
+      state.lastPairs = data.utterances || [];
       renderReport(data.report);
+      renderFeedback(data.feedback, state.lastPairs, 'm2');
       showExport(data.exportId);
       state.sessionId = null;
       $('#inputBoxM2').hidden = true;
@@ -809,7 +816,9 @@ async function finishM2() {
     const data = await resp.json();
     if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
     setStatus('演练结束（你主动结束）。');
+    state.lastPairs = data.utterances || [];
     renderReport(data.report);
+    renderFeedback(data.feedback, state.lastPairs, 'm2');
     showExport(data.exportId);
     state.sessionId = null;
     $('#inputBoxM2').hidden = true;

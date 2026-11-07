@@ -482,6 +482,36 @@ ${lines}
   }
 }
 
+// ─── 模式2 个性化反馈：逐句医生表达改进 + 提升方案 ───
+async function genDoctorFeedback(env, state, signal) {
+  const utterances = state.log.filter(e => e.role === 'doctor').map(e => e.content);
+  if (!utterances.length) return null;
+  const pl = state.patientInfo.language;
+  const lines = utterances.map((u, i) => {
+    const s = state.scores[i];
+    return `第${i + 1}句：${u}${s ? `（评语：${s.comment}；原因：${s.key_point}）` : ''}`;
+  }).join('\n');
+  const r = await callModel(env, [
+    {role: 'user', content: `以下是医护人员在演练中直接用${pl}与外籍患者沟通的完整发言记录：
+${lines}
+用户共使用参考建议 ${state.hintUsed || 0} 次。
+请面向这位学员产出个性化反馈，输出严格 JSON：
+- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 针对该句的更地道${pl}表达（保持原意与医生身份）}
+- plan: 数组，2-4 条个性化提升建议。必须针对本场的实际问题（用词、语法、术语通俗化、信息完整性、同理心、话轮控制等），每项 {point: 问题点, advice: 具体改进方法, example: 改写示例（引用本场实际语句）}；不要输出与本场无关的通用建议。
+只输出 JSON，不要额外文字。`},
+  ], {json: true, max: 2200, temperature: 0.3, tag: 'doctor_feedback', signal});
+  try {
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return {
+      references: Array.isArray(t.references) ? t.references.slice(0, utterances.length) : [],
+      plan: Array.isArray(t.plan) ? t.plan.slice(0, 4) : [],
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return null;
+  }
+}
+
 // ─── 剧本讲解生成（设计稿：医学知识/诊疗流程/专业术语/语言表达难点）───
 async function genTeaching(env, state, signal) {
   const scenario = getScenario(state.settings.scenario);
@@ -624,4 +654,4 @@ ${JSON.stringify(view)}
   return false; // 容错：两次异常/非法回复按继续处理，由外层 MAX_ROUNDS 兜底
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback};
