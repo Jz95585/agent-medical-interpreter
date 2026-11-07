@@ -25,29 +25,30 @@ function loadEntries() {
   return entries;
 }
 
-// 口语/简称 → 检索词扩展：MSD 标题用规范病名，疾病池常用简称对不上；
-// 扩展词包含 sub_topic 名，保证病名本身缺条目时仍能定位到症状/专科条目
-const SYNONYMS = {
-  '肾结石': ['尿路结石', '肾绞痛', '血尿', '排尿困难'],
-  '膀胱癌': ['泌尿生殖系统肿瘤'],
-  '早期膀胱癌': ['膀胱癌', '泌尿生殖系统肿瘤'],
-  '慢阻肺': ['慢性阻塞性肺疾病', 'COPD'],
-  '急性心梗': ['心肌梗死', '急性冠脉综合征'],
-  '脾阳虚': ['消化不良', '消化道疾病'],
-  '慢性背痛': ['背痛', '颈背痛'],
-  '感冒': ['上呼吸道感染'],
-  '甲型流感': ['流感'],
-  '乙型流感': ['流感'],
-  '2型糖尿病': ['糖尿病（DM）', '糖尿病'],
-  '1型糖尿病': ['糖尿病（DM）', '糖尿病'],
-  '糖尿病': ['糖尿病（DM）'],
-  '支气管哮喘': ['哮喘'],
-  '哮喘': ['哮喘'],
-  '慢性胃炎': ['非糜烂性胃炎', '胃炎'],
-  '胃炎': ['非糜烂性胃炎'],
-  '膝关节骨关节炎': ['骨关节炎（OA）', '骨关节炎'],
-  '骨关节炎': ['骨关节炎（OA）'],
-  '高血压': ['高血压'],
+// 口语/简称 → 检索词扩展。分两类：
+// aliases 视为同一种疾病（命中标题即判定为「疾病专条」）；terms 只是相关词，仅用于召回
+const EXPANSIONS = {
+  '肾结石': {aliases: ['尿路结石'], terms: ['肾绞痛', '血尿', '排尿困难']},
+  '膀胱癌': {aliases: [], terms: ['泌尿生殖系统肿瘤']},
+  '早期膀胱癌': {aliases: ['膀胱癌'], terms: ['泌尿生殖系统肿瘤']},
+  '慢阻肺': {aliases: ['慢性阻塞性肺疾病', '慢性阻塞性肺病', 'COPD'], terms: []},
+  '急性心梗': {aliases: ['心肌梗死'], terms: ['急性冠脉综合征']},
+  '脾阳虚': {aliases: [], terms: ['消化不良', '消化道疾病']},
+  '慢性背痛': {aliases: ['背痛', '背部疼痛'], terms: ['颈背痛']},
+  '感冒': {aliases: ['上呼吸道感染'], terms: []},
+  '甲型流感': {aliases: ['流感'], terms: []},
+  '乙型流感': {aliases: ['流感'], terms: []},
+  '2型糖尿病': {aliases: ['糖尿病（DM）', '糖尿病'], terms: []},
+  '1型糖尿病': {aliases: ['糖尿病（DM）', '糖尿病'], terms: []},
+  '糖尿病': {aliases: ['糖尿病（DM）'], terms: []},
+  '支气管哮喘': {aliases: ['哮喘'], terms: []},
+  '哮喘': {aliases: ['哮喘'], terms: []},
+  '慢性胃炎': {aliases: ['非糜烂性胃炎', '胃炎'], terms: []},
+  '胃炎': {aliases: ['非糜烂性胃炎'], terms: []},
+  '膝关节骨关节炎': {aliases: ['骨关节炎（OA）', '骨关节炎'], terms: []},
+  '骨关节炎': {aliases: ['骨关节炎（OA）'], terms: []},
+  '原发性高血压': {aliases: ['高血压'], terms: []},
+  '高血压': {aliases: ['高血压'], terms: []},
 };
 
 // 双向包含：kw 命中标题（早期膀胱癌→膀胱癌），或标题命中 kw（仅当标题≥3字，防短词误命中）
@@ -59,15 +60,28 @@ function hit(field, kw) {
 
 // 关键词检索：title +6（完全相等再 +3）→ subTopic +4 → topic +2 → content +1；
 // 阈值 4：只有 title 或 subTopic 命中才返回，纯 content 命中视为噪声丢弃（宁缺毋滥）
+// 返回 {level, hits}：level=disease 命中疾病专条，related 只有相关条目，none 未收录
 function search(query, topN = 3) {
   const list = loadEntries();
   const words = query.split(/[\s,，、;；/]+/).map(s => s.trim()).filter(s => s.length >= 2);
-  if (!words.length) return [];
-  const kws = [...new Set(words.flatMap(w => [w, ...(SYNONYMS[w] || [])]))];
+  if (!words.length) return {level: 'none', hits: []};
+
+  const diseaseNames = [...words];
+  const kws = [];
+  for (const w of words) {
+    kws.push(w);
+    const exp = EXPANSIONS[w];
+    if (!exp) continue;
+    diseaseNames.push(...exp.aliases);
+    kws.push(...exp.aliases, ...exp.terms);
+  }
+  const uniqueKws = [...new Set(kws)];
+  const uniqueNames = [...new Set(diseaseNames)];
+
   const scored = [];
   for (const e of list) {
     let score = 0;
-    for (const kw of kws) {
+    for (const kw of uniqueKws) {
       if (hit(e.title, kw)) score += e.title === kw ? 9 : 6;
       if (hit(e.subTopic, kw)) score += 4;
       if (e.topic.includes(kw)) score += 2;
@@ -76,7 +90,11 @@ function search(query, topN = 3) {
     if (score >= 4) scored.push({score, e});
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, topN).map(({e}) => ({title: e.title, topic: e.topic, subTopic: e.subTopic, content: e.content.slice(0, 600)}));
+  const hits = scored.slice(0, topN).map(({e}) => ({title: e.title, topic: e.topic, subTopic: e.subTopic, content: e.content.slice(0, 600)}));
+  const level = !hits.length ? 'none'
+    : hits.some(h => uniqueNames.some(n => hit(h.title, n))) ? 'disease'
+    : 'related';
+  return {level, hits};
 }
 
 function loadCache() {
