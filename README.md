@@ -85,6 +85,17 @@ DRY_RUN=1 npm start
 
 此时顶栏会出现黄色「干跑模式」徽章，所有智能体返回固定样例文本。
 
+### 4. 运行测试
+
+```bash
+npm test
+```
+
+测试使用 Node 内置 test runner，全部在干跑模式下运行，**不消耗 LLM 额度**。覆盖：
+
+- 评判员超长/故障时的降级重试与 0 分兜底
+- 演练结束后导出的 docx 是否正确带上会话中的译员名
+
 ---
 
 ## 配置项
@@ -120,7 +131,7 @@ DRY_RUN=1 npm start
 ```
 .
 ├── server.mjs                  # HTTP 入口：.env 加载、Host 校验、API 转发、静态资源
-├── package.json                # 无依赖，仅 "start" 脚本
+├── package.json                # 无依赖，"start" 与 "test" 脚本
 ├── DEPLOY.md                   # 公网部署教程（内网穿透 / 云服务器 / HTTPS）
 ├── .env.example                # 配置模板
 │
@@ -134,6 +145,11 @@ DRY_RUN=1 npm start
 │   ├── docx.mjs                # 零依赖手写 OOXML 生成 .docx
 │   ├── pools.mjs               # 患者参数池（国家/语言/宗教/饮食/疾病…）
 │   └── static.mjs              # 静态资源索引与 MIME 表
+│
+├── test/
+│   ├── helpers.mjs             # 干跑模式启动服务端的测试工具
+│   ├── judge-resilience.test.mjs   # 评判员降级重试
+│   └── exchange.test.mjs       # docx 导出的字段一致性
 │
 ├── public/
 │   ├── index.html              # 单页应用
@@ -533,7 +549,7 @@ AI 医生与 AI 患者轮流说话，用户逐句提交译文。
 - 会话与导出档案全部在内存，重启即丢失；不支持多实例横向扩展
 - LLM 调用串行执行，高并发下响应会排队
 - 无持久化存储，`output/*.json` 是唯一落盘记录
-- 无测试、无 lint、无 CI
+- 无 lint、无 CI
 
 **安全层面**
 
