@@ -100,6 +100,13 @@ function doctorSystem(state) {
   const roleText = sc.doctorRoleText
     .replace('{dept}', state.doctor.specialization)
     .replace('{name}', state.doctor.name);
+  // 知识库覆盖级别的常驻约束：相关条目不能当疾病专条用
+  const kbNote = !sc.msdSearch ? ''
+    : state.msdLevel === 'related'
+      ? '\n知识库未收录该疾病的专门条目。若提供了相关条目，那只是症状或检查资料，只可作背景参考，不得作为该疾病的诊断或治疗依据，也不要声称引用了诊疗手册。'
+      : state.msdLevel === 'none'
+        ? '\n知识库未收录该疾病。请基于通用医学知识回答，不要声称引用了诊疗手册，也不要编造手册内容。'
+        : '';
   return `${roleText}
 用患者易于理解的话语表达方式进行沟通。
 请你表现得像一位真实的医务人员，直接输出你的回答或询问，而不要输出其它内容（如语气，下一步动作补充等）。
@@ -107,7 +114,7 @@ function doctorSystem(state) {
 话轮管理（硬性要求）：你每次发言只允许做一件事——要么只提出一个问题，要么只传达一条信息或医嘱。即使有多个问题或事项，也必须分多轮逐一提出，禁止在一次输出中连续追问多个问题。
 当你想终止对话时，请直接输出 'TERMINATE'。
 ${sc.terminateNote}
-对话推进要求：像真实问诊一样层层深入——先消化患者已提供的陈述并从中提取关键信息（症状、部位、时长、诱因、既往史），下一步追问应建立在这些信息之上；不要重复询问患者已经回答过的内容，也不要跳过信息缺口直接给诊断。
+对话推进要求：像真实问诊一样层层深入——先消化患者已提供的陈述并从中提取关键信息（症状、部位、时长、诱因、既往史），下一步追问应建立在这些信息之上；不要重复询问患者已经回答过的内容，也不要跳过信息缺口直接给诊断。${kbNote}
 请始终使用${dl}表达。`;
 }
 
@@ -123,15 +130,15 @@ async function doctorTurn(env, state, signal) {
   const convText = JSON.stringify(view, null, 0);
 
   // 首轮自动注入 MSD 专业版资料（professional version → 医生），并留存供剧本讲解导出
-  // 预约挂号等非诊疗场景关闭 MSD 检索
-  const msdRefs = scenario.msdSearch && view.length <= 1
-    ? msd.search(state.patientInfo.disease_info.disease_type, 2)
-    : [];
-  if (msdRefs.length) state.msdRefs = msdRefs;
-  // 检索命中→注入参考资料；无命中→明确告知未收录，防止医生假装引用知识库或编造手册内容
-  const refText = msdRefs.length
-    ? `\n以下是来自诊疗手册（专业版）的参考资料，供诊断与解释时参考：\n${JSON.stringify(msdRefs)}\n`
-    : (scenario.msdSearch ? '\n注意：知识库中未收录该疾病的专门条目。请基于通用医学常识作答，不要声称引用了知识库或诊疗手册的内容。\n' : '');
+  // 预约挂号等非诊疗场景关闭 MSD 检索；level 区分疾病专条 / 相关条目 / 未收录
+  if (scenario.msdSearch && view.length <= 1) {
+    const found = msd.search(state.patientInfo.disease_info.disease_type, 2);
+    state.msdRefs = found.hits;
+    state.msdLevel = found.level;
+  }
+  const refText = scenario.msdSearch && view.length <= 1 && state.msdRefs?.length
+    ? `\n以下是来自诊疗手册（专业版）的参考资料，供诊断与解释时参考：\n${JSON.stringify(state.msdRefs)}\n`
+    : '';
 
   const prompt = `你和口译员已有下面的对话：
 ${convText}
@@ -151,11 +158,11 @@ ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案�
   const m = /SQL:\s*(.+)/.exec(reply);
   if (m) {
     const kw = (/%\s*([^%']+?)\s*%/.exec(m[1]) || [null, state.patientInfo.disease_info.disease_type])[1];
-    const hits = msd.search(String(kw || state.patientInfo.disease_info.disease_type), 3);
+    const found = msd.search(String(kw || state.patientInfo.disease_info.disease_type), 3);
     reply = await callWithLangCheck(env, doctorSystem(state),
-      `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(hits)}\n\n请基于检索结果生成医生回复。`, dl,
+      `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(found.hits)}\n\n请基于检索结果生成医生回复。`, dl,
       {max: 900, temperature: 0.5, tag: 'doctor', signal}, signal);
-    state.sqlQueries.push({keyword: kw, hits: hits.length});
+    state.sqlQueries.push({keyword: kw, hits: found.hits.length, level: found.level});
   }
 
   const terminated = isTerminate(reply);
@@ -180,8 +187,11 @@ async function patientTurn(env, state, signal) {
   // 患者侧知识：MSD consumer version 通俗版（同一病种，不同版本对照）
   let consumerText = '';
   if (view.length <= 1) {
-    const hits = msd.search(info.disease_info.disease_type, 1);
-    const src = hits[0] ? `${hits[0].title}：${hits[0].content}` : `${info.disease_info.disease_type}（常见疾病科普）`;
+    const found = msd.search(info.disease_info.disease_type, 1);
+    // 只有疾病专条才能当作「这个病的科普」；相关条目不能冒充
+    const src = found.level === 'disease' && found.hits[0]
+      ? `${found.hits[0].title}：${found.hits[0].content}`
+      : `${info.disease_info.disease_type}（常见疾病科普）`;
     const plain = await msd.consumerize(env, info.disease_info.disease_type, src, signal);
     state.consumerPlain = plain;
     consumerText = `\n你事先在网上（患者版健康科普，内容通俗）查过这个病：「${plain}」\n`;

@@ -75,6 +75,7 @@ function makeState(settings) {
     humanScores: [],
     hintUsed: 0,
     sqlQueries: [],
+    msdLevel: null,   // 知识库覆盖级别：disease / related / none
     round: 0,
     done: false,
   };
@@ -104,6 +105,7 @@ function recordOf(state, extra = {}) {
     humanScores: state.humanScores || [],
     hintUsed: state.hintUsed || 0,
     msdRefs: state.msdRefs || [],
+    msdLevel: state.msdLevel || null,
     consumerPlain: state.consumerPlain || '',
     teaching: state.teaching || null,
     sqlQueries: state.sqlQueries,
