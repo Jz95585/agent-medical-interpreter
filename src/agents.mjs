@@ -288,7 +288,7 @@ async function callJudgeResilient(env, system, prompt, dims, original, translate
     return await callModel(env, [
       {role: 'system', content: system},
       {role: 'user', content: prompt},
-    ], {json: true, max: 1500, tag: 'judge_' + personaId, signal});
+    ], {json: true, max: 1500, temperature: 0, tag: 'judge_' + personaId, signal});
   } catch (e) {
     if (signal?.aborted) throw e;
   }
@@ -297,11 +297,74 @@ async function callJudgeResilient(env, system, prompt, dims, original, translate
     return await callModel(env, [
       {role: 'system', content: system},
       {role: 'user', content: compact},
-    ], {json: true, max: 700, tag: 'judge_retry_' + personaId, signal});
+    ], {json: true, max: 700, temperature: 0, tag: 'judge_retry_' + personaId, signal});
   } catch (e) {
     if (signal?.aborted) throw e;
     return null;
   }
+}
+
+// 单次评分：把模型回复规整成固定结构，便于多采样合并
+async function scoreOnce(env, system, prompt, dims, original, translated, personaId, signal) {
+  const r = await callJudgeResilient(env, system, prompt, dims, original, translated, personaId, signal);
+  if (!r) {
+    return {
+      ok: false,
+      values: Object.fromEntries(dims.map(d => [d.key, 0])),
+      total: 0,
+      comment: '评分服务本句未返回结果，按 0 分记录，演练继续。',
+      key_point: '',
+    };
+  }
+  let scores;
+  try {
+    scores = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+  } catch {
+    scores = {comment: '评分解析失败', key_point: ''};
+  }
+  const values = {};
+  let total = 0;
+  for (const d of dims) {
+    const v = Math.max(0, Math.min(5, Number(scores[d.key]) || 0));
+    values[d.key] = v;
+    total += v;
+  }
+  return {
+    ok: true,
+    values,
+    total,
+    comment: String(scores.comment || '').slice(0, 200),
+    key_point: String(scores.key_point || '').slice(0, 100),
+  };
+}
+
+function median(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+// 低分复核：首次低于阈值时补采两次，按维度取中位数，抑制单次异常打分。
+// 只在低分时触发，正常评分仍是一次调用。
+const LOW_SCORE_PERCENT = 60;
+async function judgeWithConsistency(runOnce, dims, perfect) {
+  const first = await runOnce();
+  const firstPercent = Math.round(first.total / perfect * 100);
+  if (!first.ok || firstPercent >= LOW_SCORE_PERCENT) return {...first, samples: 1};
+
+  const extra = [await runOnce(), await runOnce()].filter(s => s.ok);
+  if (!extra.length) return {...first, samples: 1};
+  const all = [first, ...extra];
+
+  const values = {};
+  let total = 0;
+  for (const d of dims) {
+    const v = median(all.map(s => s.values[d.key]));
+    values[d.key] = v;
+    total += v;
+  }
+  // 评语取总分最接近中位总分的样本，避免评语与分数脱节
+  const pick = all.reduce((best, s) => Math.abs(s.total - total) < Math.abs(best.total - total) ? s : best, all[0]);
+  return {ok: true, values, total, comment: pick.comment, key_point: pick.key_point, samples: all.length};
 }
 
 // ─── 评判员智能体（移植 JudgeAgent + 可编辑双量规 + 要点讲解）───
@@ -319,6 +382,18 @@ ${getLevelAnchors().map(a => '· ' + a).join('\n')}
 各子维度如下：
 ${dimLines}
 每个子维度按 1-5 分评分。请保持评估客观、中立、无偏见。评估对象人设：${persona.name}。
+评分校准（严格执行，避免分数向高分聚集）：
+先判断方向：原话为${dl}、译文为${pl} 表示"译给患者"；原话为${pl}、译文为${dl} 表示"译给医生"。
+- 5 分：该维度完全达到黄金标准，且找不到任何可指出的改进点。
+- 4 分：达到黄金标准，但至少有一处可具体指出的改进点（用词、语序、语气、术语层次、信息密度等）。
+- 3 分：基本合格，核心信息可理解，但存在明显问题，未达到黄金标准。
+- 2 分：存在影响理解或信息保真的错误（漏译关键信息、术语错误、人称混乱等）。
+- 1 分：存在导致误解、角色越界或医疗风险的严重错误。
+硬性约束：
+1) comment 或 key_point 中指出任何问题，相关维度不得给 5 分。
+2) 译给患者时，若使用患者难以理解且未作通俗解释的专业术语（例如直接说 epistaxis 而不说 nosebleed），effectiveness_trust_building 最多 3 分，并在评语中点明。
+3) 译给医生时，若为求口语化而丢失医学精确性（术语、剂量、部位），accuracy_information_integrity 不得给 5 分。
+4) 各维度独立评分，不要因为某维度优秀就抬高其他维度。
 评语措辞要求：面向教学反馈，用建设性、具体的语气指出问题与改进方向；避免"完全错误""严重失职"等决绝生硬的定性表述，避免对译员个人的整体能力下结论，只评价当前句的表现。
 注意：口译员在首次接触患者时，用患者的语言简短介绍自己的口译身份与工作方式，属于符合职业规范的行为，不应因此扣分；但介绍中不得冒充医生身份。`;
 
@@ -333,30 +408,19 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
 
 只输出JSON，不要任何额外文字。`;
 
-  const r = await callJudgeResilient(env, system, prompt, dims, original, translated, personaId, signal);
+  const perfect = perfectScore(personaId);
+  const judged = await judgeWithConsistency(
+    () => scoreOnce(env, system, prompt, dims, original, translated, personaId, signal),
+    dims, perfect);
 
-  let scores;
-  if (!r) {
-    scores = {comment: '评分服务本句未返回结果，按 0 分记录，演练继续。', key_point: ''};
-    for (const d of dims) scores[d.key] = 0;
-  } else try {
-    scores = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
-  } catch {
-    scores = {comment: '评分解析失败', key_point: ''};
-    for (const d of dims) scores[d.key] = 0;
-  }
   const result = {original_words: original, translated_words: translated};
-  let total = 0;
-  for (const d of dims) {
-    const v = Math.max(0, Math.min(5, Number(scores[d.key]) || 0));
-    result[d.key] = v;
-    total += v;
-  }
-  result.total = total;
-  result.perfect = perfectScore(personaId);
-  result.percent = Math.round(total / result.perfect * 100); // 百分制统一展示（维度 1-5 制不变）
-  result.comment = String(scores.comment || '').slice(0, 200);
-  result.key_point = String(scores.key_point || '').slice(0, 100);
+  Object.assign(result, judged.values);
+  result.total = judged.total;
+  result.perfect = perfect;
+  result.percent = Math.round(judged.total / perfect * 100); // 百分制统一展示（维度 1-5 制不变）
+  result.comment = judged.comment;
+  result.key_point = judged.key_point;
+  if (judged.samples > 1) result.samples = judged.samples;
   state.scores.push(result);
   return result;
 }
