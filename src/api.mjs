@@ -88,10 +88,17 @@ async function persist(kind, state, extra = {}) {
   fs.mkdirSync(dir, {recursive: true});
   const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const file = path.join(dir, `${state.settings.scenario}_${state.settings.interpreterType}_${kind}_${ts}.json`);
-  const record = {
+  fs.writeFileSync(file, JSON.stringify(recordOf(state, extra), null, 2), 'utf8');
+  return path.basename(file);
+}
+
+// 落盘与 docx 导出共用同一份记录结构，避免两处字段不一致（如 interpreter 漏写）
+function recordOf(state, extra = {}) {
+  return {
     settings: state.settings,
     patientInfo: state.patientInfo,
     doctor: state.doctor,
+    interpreter: state.interpreter,
     log: state.log,
     scores: state.scores,
     humanScores: state.humanScores || [],
@@ -103,8 +110,6 @@ async function persist(kind, state, extra = {}) {
     rounds: state.round,
     ...extra,
   };
-  fs.writeFileSync(file, JSON.stringify(record, null, 2), 'utf8');
-  return path.basename(file);
 }
 
 function scoreReport(state) {
@@ -483,7 +488,9 @@ async function route(request, env) {
     });
   }
 
+  // 量规后台化后，读接口同样关闭：评分仍按服务端存档执行，但访客拿不到维度与评语要求
   if (routeName === 'GET /api/rubric') {
+    if (env.RUBRIC_PUBLIC !== '1') throw err('量规已后台化（RUBRIC_PUBLIC=0），不对访客开放。', 403);
     return json(getStore());
   }
 
@@ -561,21 +568,7 @@ async function route(request, env) {
     const item = archive.get(exportId);
     if (!item) throw err('导出记录不存在或已过期，请重新演练后再导出。', 404);
     const {state, extra} = item;
-    const record = {
-      settings: state.settings,
-      patientInfo: state.patientInfo,
-      doctor: state.doctor,
-      log: state.log,
-      scores: state.scores,
-      humanScores: state.humanScores || [],
-      hintUsed: state.hintUsed || 0,
-      msdRefs: state.msdRefs || [],
-      consumerPlain: state.consumerPlain || '',
-      teaching: state.teaching || null,
-      rounds: state.round,
-      ...extra,
-    };
-    const buf = buildScriptDocx(record);
+    const buf = buildScriptDocx(recordOf(state, extra));
     const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     return new Response(new Uint8Array(buf), {
       headers: {

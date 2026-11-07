@@ -281,6 +281,29 @@ ${fewshot}请你保证翻译内容始终使用第一人称完整地传达双方�
   return {role: 'interpreter', dir, content};
 }
 
+// 评判调用：超长或临时故障时降级重试一次（压缩输出要求）；仍失败返回 null，
+// 由 judgeTurn 记 0 分继续演练，避免单句评分把整场会话打断。
+async function callJudgeResilient(env, system, prompt, dims, original, translated, personaId, signal) {
+  try {
+    return await callModel(env, [
+      {role: 'system', content: system},
+      {role: 'user', content: prompt},
+    ], {json: true, max: 1500, tag: 'judge_' + personaId, signal});
+  } catch (e) {
+    if (signal?.aborted) throw e;
+  }
+  try {
+    const compact = `原话：${original}\n译文：${translated}\n只输出 JSON，字段：${dims.map(d => d.key).join(', ')}, comment, key_point。每个分数字段填 1-5 的整数，comment 不超过 30 字，key_point 不超过 20 字。`;
+    return await callModel(env, [
+      {role: 'system', content: system},
+      {role: 'user', content: compact},
+    ], {json: true, max: 700, tag: 'judge_retry_' + personaId, signal});
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return null;
+  }
+}
+
 // ─── 评判员智能体（移植 JudgeAgent + 可编辑双量规 + 要点讲解）───
 async function judgeTurn(env, state, original, translated, signal) {
   const personaId = state.settings.interpreterType;
@@ -310,13 +333,13 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
 
 只输出JSON，不要任何额外文字。`;
 
-  const r = await callModel(env, [
-    {role: 'system', content: system},
-    {role: 'user', content: prompt},
-  ], {json: true, max: 1500, tag: 'judge_' + personaId, signal});
+  const r = await callJudgeResilient(env, system, prompt, dims, original, translated, personaId, signal);
 
   let scores;
-  try {
+  if (!r) {
+    scores = {comment: '评分服务本句未返回结果，按 0 分记录，演练继续。', key_point: ''};
+    for (const d of dims) scores[d.key] = 0;
+  } else try {
     scores = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
   } catch {
     scores = {comment: '评分解析失败', key_point: ''};
