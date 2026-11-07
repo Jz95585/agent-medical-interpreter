@@ -488,7 +488,9 @@ async function route(request, env) {
     });
   }
 
+  // 量规后台化后，读接口同样关闭：评分仍按服务端存档执行，但访客拿不到维度与评语要求
   if (routeName === 'GET /api/rubric') {
+    if (env.RUBRIC_PUBLIC !== '1') throw err('量规已后台化（RUBRIC_PUBLIC=0），不对访客开放。', 403);
     return json(getStore());
   }
 

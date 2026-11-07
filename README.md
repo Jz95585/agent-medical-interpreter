@@ -107,10 +107,12 @@ npm test
 | `AMI_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI 兼容 API 的 base URL |
 | `AMI_MODEL` | `deepseek/deepseek-v4.1-flash` | 模型 ID |
 | `AMI_API_KEY` | — | 必填（除干跑模式外）。缺失时所有请求返回 503 |
+| `SILICONFLOW_API_KEY` | — | 语音服务 Key。缺失时朗读回退浏览器合成，语音输入不可用 |
 | `PORT` | `8790` | 监听端口，必须在 1024–65535 之间 |
 | `DRY_RUN` | `0` | `1` = 干跑，不调用 LLM |
 | `BIND` | `127.0.0.1` | 监听地址。公网直连服务器时设 `0.0.0.0` |
 | `ALLOWED_HOSTS` | 为空 | Host 头白名单，逗号分隔，支持三种写法（见下） |
+| `RUBRIC_PUBLIC` | 空（等同 `0`） | `1` = 对访客开放量规读写；其他值 = 后台化，隐藏页面且接口返回 403 |
 
 `ALLOWED_HOSTS` 写法：
 
@@ -149,6 +151,7 @@ npm test
 ├── test/
 │   ├── helpers.mjs             # 干跑模式启动服务端的测试工具
 │   ├── judge-resilience.test.mjs   # 评判员降级重试
+│   ├── rubric-gate.test.mjs    # 量规接口的开放/后台化开关
 │   └── exchange.test.mjs       # docx 导出的字段一致性
 │
 ├── public/
@@ -363,9 +366,9 @@ AI 医生与 AI 患者轮流说话，用户逐句提交译文。
 | 方法 | 路径 | 请求体 | 说明 |
 |---|---|---|---|
 | GET | `/api/config` | — | 模型名、干跑标志、场景列表、译员类型、全部参数池 |
-| GET | `/api/rubric` | — | 当前完整量规存档 |
-| POST | `/api/rubric/save` | `{persona, personaNote[], dims[]}` | 保存某套量规 |
-| POST | `/api/rubric/reset` | — | 恢复默认量规 |
+| GET | `/api/rubric` | — | 当前完整量规存档。`RUBRIC_PUBLIC!=1` 时返回 403 |
+| POST | `/api/rubric/save` | `{persona, personaNote[], dims[]}` | 保存某套量规。`RUBRIC_PUBLIC!=1` 时返回 403 |
+| POST | `/api/rubric/reset` | — | 恢复默认量规。`RUBRIC_PUBLIC!=1` 时返回 403 |
 
 ### 模式 1
 
