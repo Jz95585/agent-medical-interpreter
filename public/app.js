@@ -277,10 +277,11 @@ const MSG_AVATARS = {doctor: 'av_doctor.svg', patient: 'av_patient.svg', interpr
 function msgRole(colId) {
   return colId === '#doctorCol' ? 'doctor' : colId === '#patientCol' ? 'patient' : 'interpreter';
 }
-function bubble(colId, tagText, text, extraClass = '', lang = '') {
+function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '') {
   const role = msgRole(colId);
   const div = document.createElement('div');
-  div.className = 'msg ' + role + (extraClass ? ' ' + extraClass : '');
+  // dir：译员消息的翻译方向——to_patient 与医生同侧（左），to_doctor 与患者同侧（右）
+  div.className = 'msg ' + role + (extraClass ? ' ' + extraClass : '') + (dir ? ' dir-' + dir : '');
   const img = document.createElement('img');
   img.className = 'avatar';
   img.src = MSG_AVATARS[role];
@@ -507,7 +508,7 @@ function handleAutoEvent(ev) {
     case 'message': {
       if (ev.speaker === 'doctor') bubble('#doctorCol', `${roleLabel()} · 第${ev.round}轮`, ev.text, '', ev.lang);
       else if (ev.speaker === 'patient') bubble('#patientCol', `患者 · 第${ev.round}轮`, ev.text, '', ev.lang);
-      else bubble('#interpCol', ev.dir === 'to_patient' ? `译给患者（${ev.lang}）` : `译给${roleLabel()}（${ev.lang}）`, ev.text, '', ev.lang);
+      else bubble('#interpCol', ev.dir === 'to_patient' ? `译给患者（${ev.lang}）` : `译给${roleLabel()}（${ev.lang}）`, ev.text, '', ev.lang, ev.dir);
       break;
     }
     case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`); break;
@@ -556,7 +557,7 @@ async function submitTranslation() {
   const dirText = state.pendingTarget === 'to_patient'
     ? `译给患者（${state.drillLangs.patientLanguage}）`
     : `译给${roleLabel()}（${state.drillLangs.doctorLanguage}）`;
-  bubble('#interpCol', '我的译文 · ' + dirText, text, 'scored');
+  bubble('#interpCol', '我的译文 · ' + dirText, text, 'scored', '', state.pendingTarget);
 
   try {
     const resp = await fetch('/api/drill/step', {

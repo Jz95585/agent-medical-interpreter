@@ -139,7 +139,10 @@ body {
 .msg { display: flex; gap: 9px; align-items: flex-start; max-width: 88%; }
 .msg.doctor { align-self: flex-start; }
 .msg.patient { align-self: flex-end; flex-direction: row-reverse; }
-.msg.interpreter { align-self: center; max-width: 76%; }
+/* 译员气泡按翻译方向贴靠：译给患者→与医生同侧（左），译给医生→与患者同侧（右） */
+.msg.interpreter { max-width: 76%; align-self: center; }
+.msg.interpreter.dir-to_patient { align-self: flex-start; }
+.msg.interpreter.dir-to_doctor { align-self: flex-end; flex-direction: row-reverse; }
 .msgMain {
   padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
