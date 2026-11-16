@@ -127,6 +127,7 @@ function doctorSystem(state) {
 请你表现得像一位真实的医务人员，直接输出你的回答或询问，而不要输出其它内容（如语气，下一步动作补充等）。
 你的输出中不应该有任何特殊符号如括号，破折号，冒号等。
 话轮管理（硬性要求）：你每次发言只允许做一件事——要么只提出一个问题，要么只传达一条信息或医嘱。即使有多个问题或事项，也必须分多轮逐一提出，禁止在一次输出中连续追问多个问题。
+话轮长度：日常问诊与解释每次不超过三句（约 150 字）；给出诊断与治疗方案时可展开，但控制在五句以内，且不得在一次话轮中同时完成诊断+方案+医嘱多件事。
 当你想终止对话时，请直接输出 'TERMINATE'。
 ${sc.terminateNote}
 对话推进要求：像真实问诊一样层层深入——先消化患者已提供的陈述并从中提取关键信息（症状、部位、时长、诱因、既往史），下一步追问应建立在这些信息之上；不要重复询问患者已经回答过的内容，也不要跳过信息缺口直接给诊断。${kbNote}
@@ -184,10 +185,30 @@ ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案�
     state.sqlQueries.push({keyword: kw, hits: hits.length, level: found.level});
   }
 
+  // 话轮长度校验（反馈 #1）：超限重试一次，取较短者落地，不阻塞对话
   const terminated = isTerminate(reply);
-  const content = stripTerminate(reply);
+  let content = stripTerminate(reply);
+  const over = turnTooLong(content);
+  if (over) {
+    const fix = over.chars ? `回复 ${over.chars} 字，超过 260 字上限` : `回复 ${over.sentences} 句，超过 4 句上限`;
+    const retry = await callWithLangCheck(env, doctorSystem(state),
+      `${prompt}\n\n纠正：你上一条${fix}。医疗话轮应简短——请只保留最重要的一个事项讲清楚，其余内容留给后续话轮，压缩到 150 字左右。直接输出压缩后的回复，不要任何解释。`, dl,
+      {max: 900, temperature: 0.5, tag: 'doctor', signal}, signal);
+    const fixed = stripTerminate(retry);
+    if (fixed.length < content.length) content = fixed;
+  }
   state.log.push({role: 'doctor', content});
   return {role: 'doctor', content, terminated};
+}
+
+// 话轮长度判定（反馈 #1）：字符数 >260 或句数 >4 视为过长；
+// 阈值卡在"超长"边界而非"详细"边界——consult 的治疗方案详述（五句内）不误伤
+function turnTooLong(text) {
+  const t = String(text || '');
+  if (t.length > 260) return {chars: t.length, limit: 260};
+  const sentences = (t.match(/[。！？!?]/g) || []).length;
+  if (sentences > 4) return {sentences, limit: 4};
+  return null;
 }
 
 // ─── 患者智能体（移植 PatientAgent + 新参数注入 + MSD 通俗版资料）───
