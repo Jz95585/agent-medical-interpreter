@@ -34,7 +34,9 @@ async function run(disease) {
     const env = {AMI_BASE_URL: `http://127.0.0.1:${port}/v1`, AMI_API_KEY: 't'};
     const state = makeState(disease);
     await doctorTurn(env, state, undefined);
-    return {system: mock.bodies[0].messages[0].content, user: mock.bodies[0].messages[1].content, state};
+    // doctor 请求带 system+user 两条消息；rerank 精排请求只有 user 一条（若触发）
+    const docReq = mock.bodies.find(b => b.messages.length === 2) || mock.bodies[0];
+    return {system: docReq.messages[0].content, user: docReq.messages[1].content, state};
   } finally {
     srv.close();
   }

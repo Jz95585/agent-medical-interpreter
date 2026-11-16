@@ -55,6 +55,7 @@ const DRY_SAMPLES = {
     ],
   }),
   manager: 'CONTINUE',
+  rerank: JSON.stringify({order: [0, 1, 2]}),
   feedback: JSON.stringify({
     references: [
       {half: 1, reference: 'Hello, I am the interpreter. Dr. Zhang would like to know your name. Please have a seat.'},

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {callModel} from './llm.mjs';
+import {callModel, parseJSON} from './llm.mjs';
 
 const base = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(base, '..', 'data', 'msd_diseases_final_new.json');
@@ -97,6 +97,26 @@ function search(query, topN = 3) {
   return {level, hits};
 }
 
+// AI 精排：关键词分不出临床方向时（如"静脉曲张"的下肢/食管胃底两个方向），
+// 让 LLM 按与疾病的临床相关性对候选条目重排。仅一个候选或调用失败时原序返回。
+async function rerank(env, disease, hits, signal) {
+  if (!hits || hits.length <= 1) return hits;
+  const cand = hits.map((h, i) => ({i, title: h.title, subTopic: h.subTopic, preview: h.content.slice(0, 120)}));
+  const r = await callModel(env, [
+    {role: 'user', content: `疾病「${disease}」在诊疗手册中检索到以下候选条目。请按与该疾病临床诊疗的相关程度从高到低排序，输出严格 JSON：{"order": [条目编号数组]}\n候选条目：\n${JSON.stringify(cand)}\n只输出 JSON，不要额外文字。`},
+  ], {json: true, max: 200, temperature: 0, tag: 'rerank', signal});
+  try {
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    const order = Array.isArray(t.order) ? t.order.map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < hits.length) : [];
+    if (!order.length) return hits;
+    const rest = hits.map((h, i) => i).filter(i => !order.includes(i));
+    return [...order, ...rest].map(i => hits[i]);
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return hits; // 精排失败不影响主流程
+  }
+}
+
 function loadCache() {
   try {
     return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -125,4 +145,4 @@ async function consumerize(env, title, content, signal) {
   return r.message;
 }
 
-export {search, consumerize};
+export {search, consumerize, rerank};

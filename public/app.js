@@ -60,6 +60,15 @@ async function init() {
     if (c && p.languages.includes(c.language)) $('#language').value = c.language;
   };
 
+  // 疾病 → 推荐科室联动：映射表命中时自动切科室（用户仍可手动改）
+  $('#disease').addEventListener('change', () => {
+    const dept = p.diseaseDepartments?.[$('#disease').value.trim()];
+    if (dept && $('#department').value !== dept) {
+      $('#department').value = dept;
+      setStatus('已按疾病「' + $('#disease').value.trim() + '」推荐科室：' + dept + '（可手动调整）');
+    }
+  });
+
   // 标准病人预设：一键填充患者参数
   $('#presetSelect').innerHTML = '<option value="">— 选择后自动填充以下参数 —</option>' +
     p.presets.map((x, i) => `<option value="${i}">${x.label}</option>`).join('');
@@ -67,6 +76,7 @@ async function init() {
     const x = p.presets[Number($('#presetSelect').value)];
     if (!x) return;
     $('#disease').value = x.disease;
+    if (x.department) $('#department').value = x.department;
     $('#country').value = x.country;
     $('#language').value = x.language;
     $('#gender').value = x.gender;

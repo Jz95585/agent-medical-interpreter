@@ -147,8 +147,10 @@ async function doctorTurn(env, state, signal) {
   // 首轮自动注入 MSD 专业版资料（professional version → 医生），并留存供剧本讲解导出
   // 预约挂号等非诊疗场景关闭 MSD 检索；level 区分疾病专条 / 相关条目 / 未收录
   if (scenario.msdSearch && view.length <= 1) {
-    const found = msd.search(state.patientInfo.disease_info.disease_type, 2);
-    state.msdRefs = found.hits;
+    const found = msd.search(state.patientInfo.disease_info.disease_type, 3);
+    // AI 精排：候选>1 时按临床相关性重排（治"静脉曲张→食管胃底"式同词异病错配）
+    const hits = await msd.rerank(env, state.patientInfo.disease_info.disease_type, found.hits, signal);
+    state.msdRefs = hits;
     state.msdLevel = found.level;
   }
   const refText = scenario.msdSearch && view.length <= 1 && state.msdRefs?.length
@@ -158,6 +160,7 @@ async function doctorTurn(env, state, signal) {
   const prompt = `你和口译员已有下面的对话：
 ${convText}
 ${refText}
+${scenario.id === 'followup' && view.length <= 1 ? `本次复诊针对的疾病是「${state.patientInfo.disease_info.disease_type}」，患者既往情况——症状：${state.patientInfo.disease_info.symptoms.join('、')}；病史：${state.patientInfo.disease_info.medical_history}。请围绕这一疾病复诊，不要询问与本疾病无关的症状。\n` : ''}
 请你根据上述对话内容，继续以${state.doctor.roleLabel}的身份回答口译员。
 ${view.length <= 1 ? scenario.doctorOpening : ''}
 ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案时请你尽可能详细地描述你的诊断和治疗建议，包括可能的药物、剂量、使用方法等。' : ''}
@@ -174,10 +177,11 @@ ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案�
   if (m) {
     const kw = (/%\s*([^%']+?)\s*%/.exec(m[1]) || [null, state.patientInfo.disease_info.disease_type])[1];
     const found = msd.search(String(kw || state.patientInfo.disease_info.disease_type), 3);
+    const hits = await msd.rerank(env, kw || state.patientInfo.disease_info.disease_type, found.hits, signal);
     reply = await callWithLangCheck(env, doctorSystem(state),
-      `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(found.hits)}\n\n请基于检索结果生成医生回复。`, dl,
+      `${prompt}\n\n你刚才请求查询知识库「${kw}」，检索结果：\n${JSON.stringify(hits)}\n\n请基于检索结果生成医生回复。`, dl,
       {max: 900, temperature: 0.5, tag: 'doctor', signal}, signal);
-    state.sqlQueries.push({keyword: kw, hits: found.hits.length, level: found.level});
+    state.sqlQueries.push({keyword: kw, hits: hits.length, level: found.level});
   }
 
   const terminated = isTerminate(reply);
@@ -202,10 +206,11 @@ async function patientTurn(env, state, signal) {
   // 患者侧知识：MSD consumer version 通俗版（同一病种，不同版本对照）
   let consumerText = '';
   if (view.length <= 1) {
-    const found = msd.search(info.disease_info.disease_type, 1);
-    // 只有疾病专条才能当作「这个病的科普」；相关条目不能冒充
-    const src = found.level === 'disease' && found.hits[0]
-      ? `${found.hits[0].title}：${found.hits[0].content}`
+    const found = msd.search(info.disease_info.disease_type, 2);
+    // 精排后取第一条，只有疾病专条才能当作「这个病的科普」；相关条目不能冒充
+    const ranked = await msd.rerank(env, info.disease_info.disease_type, found.hits, signal);
+    const src = found.level === 'disease' && ranked[0]
+      ? `${ranked[0].title}：${ranked[0].content}`
       : `${info.disease_info.disease_type}（常见疾病科普）`;
     const plain = await msd.consumerize(env, info.disease_info.disease_type, src, signal);
     state.consumerPlain = plain;
@@ -265,6 +270,7 @@ function interpreterSystem(state) {
 能够注意到医患双方的情绪，缓解因语言障碍或文化差异产生的误解，促进双方的顺畅交流。
 请准确传达信息，也要兼顾信息传达的效率，不要添加个人的医疗意见。
 确保以第一人称翻译患者或医生的语言。翻译中不应该出现说话者说明，例如"the doctor says"，只需直接翻译内容。
+共情视角要求：当说话者表达自身感受或担忧（如 I'm really worried / it scares me）时，译文必须保留第一人称的直接感受（如 我很担心 / 这让我害怕）；严禁转述成对他人的安抚语（如 我理解您的担心），那是安抚者而非说话者本人的视角。
 你永远不应该回答患者或医生的问题，只需翻译双方的对话内容。
 不要添加任何其余内容（如注意、分析、语气描述、话语发出者等）。
 你不能结束对话，所以请你不要在输出中包含'TERMINATE'字样。`;

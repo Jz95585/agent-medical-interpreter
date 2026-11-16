@@ -9,7 +9,7 @@ import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
 import * as audio from './audio.mjs';
-import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS} from './pools.mjs';
+import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS, DISEASE_DEPARTMENT} from './pools.mjs';
 
 const sessions = new Map(); // drill/m2 会话：sessionId → {state, pending}
 
@@ -495,6 +495,7 @@ async function route(request, env) {
         departments: DEPARTMENTS,
         doctorLanguages: DOCTOR_LANGUAGES,
         presets: PRESET_PATIENTS,
+        diseaseDepartments: DISEASE_DEPARTMENT, // 疾病→推荐科室映射，前端联动
       },
     });
   }
