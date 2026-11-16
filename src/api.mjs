@@ -4,7 +4,7 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview} from './agents.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
@@ -517,6 +517,16 @@ async function route(request, env) {
     if (env.RUBRIC_PUBLIC !== '1') throw err('量规编辑已后台化（RUBRIC_PUBLIC=0），请通过服务器本地环境修改。', 403);
     resetStore();
     return json({ok: true});
+  }
+
+  if (routeName === 'GET /api/prompts') {
+    // 提示词只读展示（与量规同闸门：RUBRIC_PUBLIC=0 时后台化）
+    if (env.RUBRIC_PUBLIC !== '1') throw err('提示词展示已后台化（RUBRIC_PUBLIC=0）。', 403);
+    const url = new URL(request.url);
+    return json(buildPromptPreview(
+      url.searchParams.get('scenario') || 'consult',
+      url.searchParams.get('interpreterType') || 'professional',
+    ));
   }
 
   if (routeName === 'POST /api/tts') {

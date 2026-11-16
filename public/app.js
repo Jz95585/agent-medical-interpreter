@@ -38,6 +38,7 @@ async function init() {
     const cur = cfg.scenarios.find(x => x.id === sc.value);
     $('#scenarioDesc').textContent = cur?.description || '';
     applyRoleUI(cur);
+    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
   };
   sc.onchange();
 
@@ -109,6 +110,7 @@ async function init() {
     btn.classList.add('active');
     state.persona = btn.dataset.persona;
     $('#personaLabel').textContent = cfg.interpreterTypes.find(t => t.id === state.persona)?.name || '';
+    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
   });
   document.querySelectorAll('.modeTab').forEach(tab => {
     tab.onclick = () => {
@@ -136,7 +138,9 @@ async function init() {
       tab.classList.add('active');
       $('#scoresView').hidden = tab.dataset.ptab !== 'scores';
       $('#rubricView').hidden = tab.dataset.ptab !== 'rubric';
+      $('#promptsView').hidden = tab.dataset.ptab !== 'prompts';
       if (tab.dataset.ptab === 'rubric') loadRubric();
+      if (tab.dataset.ptab === 'prompts') loadPrompts();
     };
   });
   $('#rubricPersonaSeg').addEventListener('click', (e) => {
@@ -159,9 +163,11 @@ async function init() {
     rubricStatus('已恢复默认。');
   };
 
-  // 量规后台化：RUBRIC_PUBLIC=0 时隐藏编辑页，不预载量规（译员人设说明随之隐藏）
+  // 量规后台化：RUBRIC_PUBLIC=0 时隐藏量规编辑页与提示词页，不预载量规
   const rubricTab = document.querySelector('.pTab[data-ptab="rubric"]');
   if (rubricTab) rubricTab.hidden = !cfg.rubricPublic;
+  const promptsTab = document.querySelector('.pTab[data-ptab="prompts"]');
+  if (promptsTab) promptsTab.hidden = !cfg.rubricPublic;
   if (cfg.rubricPublic) {
     await loadRubric(); // 预加载，供 personaNote 展示
     showPersonaNote();
@@ -180,6 +186,24 @@ function showPersonaNote() {
   const persona = rub[state.persona];
   $('#personaNote').innerHTML = persona.personaNote.map(s => '· ' + s).join('<br>') +
     `<br>共 ${persona.dims.length} 个评估维度（每维 1-5 分）。综合得分按 100 分制折算：<b>维度场均分 ÷ 5 × 100</b>`;
+}
+
+// 提示词只读展示：按当前场景+译员类型拉取各智能体实际运行的系统提示词
+async function loadPrompts() {
+  try {
+    const resp = await fetch(`/api/prompts?scenario=${encodeURIComponent($('#scenario').value)}&interpreterType=${encodeURIComponent(state.persona)}`);
+    const data = await resp.json();
+    if (!resp.ok) { $('#promptBody').innerHTML = '<p class="empty">' + (data.error || resp.status) + '</p>'; return; }
+    const sec = (title, body) => `<div class="promptSec"><h4>${title}</h4><pre>${body}</pre></div>`;
+    $('#promptBody').innerHTML =
+      `<p class="desc">场景：${data.scenarioName} · 译员类型：${data.interpreterType}</p>` +
+      sec('医生/前台 · 系统提示词（含终止条件）', data.doctorSystem) +
+      sec('患者 · 系统提示词', data.patientSystem) +
+      sec('译员 · 系统提示词', data.interpreterSystem) +
+      sec('管理者 · 系统提示词（终止判定）', data.managerSystem);
+  } catch (e) {
+    $('#promptBody').innerHTML = '<p class="empty">加载失败：' + e.message + '</p>';
+  }
 }
 
 // ─── 患者随机生成 ───

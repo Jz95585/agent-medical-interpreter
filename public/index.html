@@ -170,6 +170,7 @@
     <div class="panelTabs">
       <button class="pTab active" data-ptab="scores">演练评分</button>
       <button class="pTab" data-ptab="rubric">量规编辑</button>
+      <button class="pTab" data-ptab="prompts">提示词</button>
     </div>
 
     <div id="scoresView">
@@ -216,6 +217,12 @@
         <button id="saveRubric" class="primary" type="button">保存量规</button>
       </div>
       <p id="rubricStatus" class="status"></p>
+    </div>
+
+    <div id="promptsView" hidden>
+      <h2>智能体提示词（只读）</h2>
+      <p class="desc">以下为当前场景与译员类型下各智能体实际运行的系统提示词。【】占位符在演练开始后由患者参数填充。</p>
+      <div id="promptBody"></div>
     </div>
   </aside>
 </main>

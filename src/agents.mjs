@@ -198,6 +198,30 @@ function patientView(state) {
     || (state.settings.mode === 'm2' && e.role === 'doctor'));
 }
 
+// 患者系统提示词（patientTurn 使用；buildPromptPreview 复用，占位字段由患者参数填充）
+function patientSystem(state, belief = '', diet = '', taboo = '') {
+  const info = state.patientInfo;
+  return `你是一名叫 ${info.name} 的患者，来自${info.country}。
+你的母语是${info.language}。
+你的症状是：${info.disease_info.symptoms.join('、')}。
+你的病史是：${info.disease_info.medical_history}。
+${belief}${diet}${taboo}
+你的性格偏向：${info.personality}；你的健康素养：${info.health_literacy}。
+你目前感觉很不舒服，寻求医疗帮助。
+${getScenario(state.settings.scenario).patientNote}
+当被问及症状时，请使用你的母语口语化地描述。
+请你表现像一位真实的患者，描述你的症状和感受。
+请直接输出您的对话，而不要输出其它符号或补充说明等
+请你确保你所有的输出都使用${info.language}。
+请确保你的输出不要过长，便于口译员为你传达意思。
+如果您对医生有多个问题，在一次输出中只提出一个问题，避免同时提出多个问题。
+在医生给出诊断和治疗方案后，你应该对任何不了解的医学专业问题可以提出疑问。
+只有在医生给出诊断和治疗方案，并解答了你的疑问后，你才能终止对话。
+如果你没有进一步的疑问，请你说明没有疑问并感谢医生，才能结束与医生的对话。
+当你想要终止对话时，请直接输出 'TERMINATE' 来结束对话。
+你的输出中不应该有任何特殊符号如括号，破折号，冒号等。`;
+}
+
 async function patientTurn(env, state, signal) {
   const info = state.patientInfo;
   const view = patientView(state);
@@ -220,26 +244,7 @@ async function patientTurn(env, state, signal) {
   const belief = info.religion && info.religion !== '无特定信仰' ? `你的宗教信仰是${info.religion}。` : '';
   const taboo = info.taboos && info.taboos !== '无特殊禁忌' ? `你的文化禁忌：${info.taboos}。当医生的安排与你的禁忌或信仰可能冲突时，你可以自然地提出顾虑或提问。` : '';
   const diet = info.dietary && info.dietary !== '无特殊要求' ? `你的饮食习惯：${info.dietary}。` : '';
-
-  const system = `你是一名叫 ${info.name} 的患者，来自${info.country}。
-你的母语是${info.language}。
-你的症状是：${info.disease_info.symptoms.join('、')}。
-你的病史是：${info.disease_info.medical_history}。
-${belief}${diet}${taboo}
-你的性格偏向：${info.personality}；你的健康素养：${info.health_literacy}。
-你目前感觉很不舒服，寻求医疗帮助。
-${getScenario(state.settings.scenario).patientNote}
-当被问及症状时，请使用你的母语口语化地描述。
-请你表现像一位真实的患者，描述你的症状和感受。
-请直接输出您的对话，而不要输出其它符号或补充说明等
-请你确保你所有的输出都使用${info.language}。
-请确保你的输出不要过长，便于口译员为你传达意思。
-如果您对医生有多个问题，在一次输出中只提出一个问题，避免同时提出多个问题。
-在医生给出诊断和治疗方案后，你应该对任何不了解的医学专业问题可以提出疑问。
-只有在医生给出诊断和治疗方案，并解答了你的疑问后，你才能终止对话。
-如果你没有进一步的疑问，请你说明没有疑问并感谢医生，才能结束与医生的对话。
-当你想要终止对话时，请直接输出 'TERMINATE' 来结束对话。
-你的输出中不应该有任何特殊符号如括号，破折号，冒号等。`;
+  const system = patientSystem(state, belief, diet, taboo);
 
   const prompt = `你和医生已有下面的对话：
 ${convText}
@@ -657,15 +662,21 @@ async function genM2Hint(env, state, signal) {
 }
 
 // ─── 管理智能体：终止判定（移植 ManagerAgent.check_terminate，容错版，终止条件随场景）───
-async function managerCheck(env, state, signal) {
+// 管理者系统提示词（managerCheck 使用；buildPromptPreview 复用）
+function managerSystem(state) {
   const sc = getScenario(state.settings.scenario);
-  const view = state.log.map(e => ({role: e.role, content: e.content}));
-  const system = `你是一个医疗多智能体对话管理者，你的任务是判断对话是否可以结束。
+  return `你是一个医疗多智能体对话管理者，你的任务是判断对话是否可以结束。
 如果对话为空，应直接输出'CONTINUE'。
 如果可以结束对话，请回复 'TERMINATE'，否则回复'CONTINUE'。
 本场景（${sc.name}）的结束条件：${sc.managerConditions}
 只有患者/服务对象没有疑问并表示感谢或道别时你才能输出'TERMINATE'，结束对话。
 请注意，回复内容必须是 'TERMINATE' 或 'CONTINUE'。`;
+}
+
+async function managerCheck(env, state, signal) {
+  const sc = getScenario(state.settings.scenario);
+  const view = state.log.map(e => ({role: e.role, content: e.content}));
+  const system = managerSystem(state);
   const prompt = `患者、口译员和医生之间已有下面的对话：
 ${JSON.stringify(view)}
 请你根据上述对话内容，判断是否需要继续对话，或者是否多智能体已经结束对话。`;
@@ -685,4 +696,30 @@ ${JSON.stringify(view)}
   return false; // 容错：两次异常/非法回复按继续处理，由外层 MAX_ROUNDS 兜底
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch};
+// ─── 提示词预览（只读展示）：按场景+译员类型组装当前实际运行的系统提示词 ───
+// 患者人设字段用占位符标注，实际运行时由患者参数填充
+function buildPromptPreview(scenarioId, interpreterType) {
+  const sc = getScenario(scenarioId);
+  const persona = getPersona(interpreterType);
+  const state = {
+    settings: {scenario: sc.id, doctorLanguage: '中文', interpreterType},
+    doctor: {name: sc.doctorName || '张医生', roleLabel: sc.roleLabel || '医生', specialization: sc.department ? '（示例科室）' : '国际门诊前台'},
+    interpreter: {name: '王译员'},
+    patientInfo: {
+      name: '【患者姓名】', country: '【国籍】', language: '【患者语言】',
+      disease_info: {disease_type: '【疾病】', symptoms: ['【症状】'], medical_history: '【病史】'},
+      personality: '【性格】', health_literacy: '【健康素养】', religion: '无特定信仰',
+      dietary: '无特殊要求', taboos: '无特殊禁忌',
+    },
+  };
+  return {
+    scenarioName: sc.name,
+    interpreterType: persona.name,
+    doctorSystem: doctorSystem(state),
+    patientSystem: patientSystem(state),
+    interpreterSystem: interpreterSystem(state),
+    managerSystem: managerSystem(state),
+  };
+}
+
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview};
