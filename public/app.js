@@ -571,7 +571,7 @@ function handleAutoEvent(ev) {
       else bubble('#interpCol', ev.dir === 'to_patient' ? `译给患者（${ev.lang}）` : `译给${roleLabel()}（${ev.lang}）`, ev.text, '', ev.lang, ev.dir);
       break;
     }
-    case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`); break;
+    case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`, lastMsg('.msg.interpreter')); break;
     case 'done': {
       if (ev.stopped === 'error') {
         setStatus(`演练中断，已保存前 ${ev.rounds} 轮进度${ev.saved ? '（' + ev.saved + '）' : ''}`);
@@ -638,7 +638,7 @@ async function submitTranslation() {
     if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
 
     if (data.score) {
-      addScoreCard(data.score, `第${state.pending.round}轮 · 我的译文`);
+      addScoreCard(data.score, `第${state.pending.round}轮 · 我的译文`, lastMsg('.msg.interpreter'));
       state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100));
     } else {
       state.aiTotals.push(null);
@@ -674,12 +674,26 @@ async function submitTranslation() {
 // ─── 评分与报告 ───
 function scoreClass(ratio) { return ratio >= .8 ? 'good' : ratio >= .6 ? 'mid' : 'low'; }
 
-function addScoreCard(score, label) {
+function lastMsg(selector) {
+  const list = document.querySelectorAll('#chatCol ' + selector);
+  return list.length ? list[list.length - 1] : null;
+}
+
+// 点击评分卡定位到对应对话并短暂高亮，方便对照「第 N 轮」找原句
+function focusMessage(el) {
+  if (!el) return;
+  document.querySelectorAll('#chatCol .msg.highlight').forEach(x => x.classList.remove('highlight'));
+  el.classList.add('highlight');
+  el.scrollIntoView({behavior: 'smooth', block: 'center'});
+  setTimeout(() => el.classList.remove('highlight'), 2600);
+}
+
+function addScoreCard(score, label, target) {
   const list = $('#scoreList');
   const empty = list.querySelector('.empty');
   if (empty) empty.remove();
   const card = document.createElement('div');
-  card.className = 'scoreCard';
+  card.className = 'scoreCard' + (target ? ' clickable' : '');
   card.innerHTML = `
     <div class="head"><span>${label}</span>
       <span class="total ${scoreClass(score.percent / 100)}">${score.percent} / 100</span></div>
@@ -687,9 +701,13 @@ function addScoreCard(score, label) {
     <div class="kp"></div>`;
   card.querySelector('.comment').textContent = score.comment || '';
   card.querySelector('.kp').textContent = score.key_point ? '要点：' + score.key_point : '';
+  if (target) {
+    card.title = '点击定位到对应对话';
+    card.onclick = () => focusMessage(target);
+  }
   list.prepend(card);
-  const bubbles = document.querySelectorAll('#chatCol .msg.interpreter');
-  if (bubbles.length) bubbles[bubbles.length - 1].classList.add('scored');
+  const targetEl = target || lastMsg('.msg.interpreter');
+  if (targetEl) targetEl.classList.add('scored');
 }
 
 // 个性化反馈（#3）：逐句对照 + 提升方案；kind 区分模式3 译文与模式2 医生表达
@@ -848,7 +866,7 @@ async function submitM2() {
     });
     const data = await resp.json();
     if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
-    if (data.score) { addScoreCard(data.score, `第${data.half}句 · 我的表达`); state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100)); }
+    if (data.score) { addScoreCard(data.score, `第${data.half}句 · 我的表达`, lastMsg('.msg.doctor')); state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100)); }
     if (data.finished) {
       const who = data.finished.reason === 'patient_terminate' ? '患者终止' : '达到句数上限';
       setStatus(`演练结束（${who}）`);

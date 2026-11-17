@@ -194,6 +194,10 @@ body {
 .scoreCard .total.good { color: var(--green); } .scoreCard .total.mid { color: var(--orange); } .scoreCard .total.low { color: #dc2626; }
 .scoreCard .comment { color: var(--muted); font-size: 11px; }
 .scoreCard .kp { margin-top: 4px; font-size: 11px; color: var(--blue); }
+.scoreCard.clickable { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.scoreCard.clickable:hover { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+/* 点击评分卡后定位到的对话高亮 */
+.msg.highlight { outline: 3px solid #f2b705; outline-offset: 2px; border-radius: 12px; }
 .report { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
 .exportRow { margin-bottom: 10px; }
 .exportRow a {

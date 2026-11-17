@@ -306,6 +306,13 @@ function interpreterSystem(state) {
   return base + '\n' + p.personaNote.map(s => '· ' + s).join('\n');
 }
 
+// 译员跳出角色的典型表述：说明自己是谁、承诺遵守要求、索要下一轮等
+// 只匹配明确的角色自述与索要轮次，避免把「请提供更多信息」这类正常译文误判
+const META_REPLY_RE = /请提供(下一轮|后续)(对话|内容)?|作为.{0,12}(译员|口译员)|我将.{0,8}遵守.{0,12}(指示|要求)|我将.{0,8}(提供|给出).{0,8}(口译|翻译)|请继续(对话|提供下一轮)|please provide the next|as (an|the) interpreter/i;
+function looksLikeMeta(text) {
+  return META_REPLY_RE.test(String(text || ''));
+}
+
 async function interpreterTurn(env, state, signal, flag) {
   const view = state.log.filter(e => e.role === 'interpreter' || e.role === 'doctor' || e.role === 'patient')
     .map(e => e.dir ? {role: e.dir, content: e.content} : {role: 'from_' + e.role, content: e.content});
@@ -329,11 +336,29 @@ ${convText}
 在翻译'from_doctor'内容时，请使用${pl}，并确保翻译后的内容易于患者理解。
 语言方向硬性要求：from_patient 的译文只能使用${dl}，from_doctor 的译文只能使用${pl}，严禁译反方向或混用两种语言。
 ${fewshot}请你保证翻译内容始终使用第一人称完整地传达双方的意图和情感。
-你的输出总是最后一条对话的翻译，而不要添加任何额外的符号或分析。${introNote}`;
+你的输出总是最后一条对话的翻译，而不要添加任何额外的符号或分析。
+你的输出永远是最后一条对话的译文本身。即使最后一条是道别、感谢或确认，也必须翻译它，不能回复、确认、评论或索要下一轮。禁止出现"作为译员""请提供下一轮对话""我将遵守"之类的说明性内容。${introNote}`;
 
-  const reply = await callWithLangCheck(env, interpreterSystem(state), prompt,
-    flag === 1 ? pl : dl, // to_patient 用患者语言，to_doctor 用医生语言
-    {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+  const expected = flag === 1 ? pl : dl; // to_patient 用患者语言，to_doctor 用医生语言
+  let reply = await callWithLangCheck(env, interpreterSystem(state), prompt,
+    expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+
+  // 模型偶尔会跳出译员角色输出说明文字（如"请提供下一轮对话"），这里重试一次
+  if (looksLikeMeta(reply)) {
+    reply = await callWithLangCheck(env, interpreterSystem(state),
+      `${prompt}\n\n纠正：你上一条没有翻译最后一条对话，而是输出了说明。请只输出最后一条对话的译文本身，不要任何解释、确认或索要下一轮。`,
+      expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+  }
+  // 仍不合格时改用最小上下文，只让它翻译最后一句话
+  if (looksLikeMeta(reply)) {
+    const last = state.log.filter(e => e.role === (flag === 1 ? 'doctor' : 'patient')).at(-1);
+    if (last) {
+      reply = await callWithLangCheck(env, interpreterSystem(state),
+        `请只把下面这句话翻译成${expected}，直接输出译文，不要任何解释或确认：\n${last.content}`,
+        expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+    }
+  }
+  if (looksLikeMeta(reply)) throw err('译员未返回有效译文，请重试。', 502);
 
   const content = reply.trim();
   const dir = flag === 1 ? 'to_patient' : 'to_doctor';
