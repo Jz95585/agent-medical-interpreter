@@ -38,7 +38,7 @@ async function init() {
     const cur = cfg.scenarios.find(x => x.id === sc.value);
     $('#scenarioDesc').textContent = cur?.description || '';
     applyRoleUI(cur);
-    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
+    reloadPromptsIfActive();
   };
   sc.onchange();
 
@@ -69,6 +69,7 @@ async function init() {
       if ($('#department').value !== dept) {
         $('#department').value = dept;
         setStatus('已按疾病「' + disease + '」推荐科室：' + dept + '（可手动调整）');
+        reloadPromptsIfActive();
       }
       clearAlert();
       return;
@@ -124,8 +125,11 @@ async function init() {
     btn.classList.add('active');
     state.persona = btn.dataset.persona;
     $('#personaLabel').textContent = cfg.interpreterTypes.find(t => t.id === state.persona)?.name || '';
-    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
+    reloadPromptsIfActive();
   });
+  // 科室与医生语言会进入医生的系统提示词，变化时同步刷新提示词页
+  $('#department').addEventListener('change', reloadPromptsIfActive);
+  $('#doctorLanguage').addEventListener('change', reloadPromptsIfActive);
   document.querySelectorAll('.modeTab').forEach(tab => {
     tab.onclick = () => {
       if (tab.disabled) return;
@@ -202,10 +206,22 @@ function showPersonaNote() {
     `<br>共 ${persona.dims.length} 个评估维度（每维 1-5 分）。综合得分按 100 分制折算：<b>维度场均分 ÷ 5 × 100</b>`;
 }
 
+function reloadPromptsIfActive() {
+  const tab = document.querySelector('.pTab[data-ptab="prompts"]');
+  if (tab && !tab.hidden && tab.classList.contains('active')) loadPrompts();
+}
+
 // 提示词只读展示：按当前场景+译员类型拉取各智能体实际运行的系统提示词
 async function loadPrompts() {
   try {
-    const resp = await fetch(`/api/prompts?scenario=${encodeURIComponent($('#scenario').value)}&interpreterType=${encodeURIComponent(state.persona)}`);
+    // 带上当前表单的科室与医生语言，展示的就是实际会用的值
+    const qs = new URLSearchParams({
+      scenario: $('#scenario').value,
+      interpreterType: state.persona,
+      department: $('#department').value,
+      doctorLanguage: $('#doctorLanguage').value,
+    });
+    const resp = await fetch('/api/prompts?' + qs);
     const data = await resp.json();
     if (!resp.ok) { $('#promptBody').innerHTML = '<p class="empty">' + (data.error || resp.status) + '</p>'; return; }
     const sec = (title, body) => `<div class="promptSec"><h4>${title}</h4><pre>${body}</pre></div>`;

@@ -19,3 +19,15 @@ test('提示词预览跟随场景变化', () => {
   assert.equal(a.scenarioName, '预约挂号');
   assert.ok(a.doctorSystem.includes('前台接待员'));
 });
+
+test('提示词预览使用当前选择的科室与医生语言', () => {
+  const p = buildPromptPreview('consult', 'professional', '心血管内科', '英语');
+  assert.ok(p.doctorSystem.includes('心血管内科'));
+  assert.ok(p.doctorSystem.includes('请始终使用英语表达'));
+  assert.doesNotMatch(p.doctorSystem, /示例科室/);
+});
+
+test('未传科室时用统一占位符', () => {
+  const p = buildPromptPreview('consult', 'professional');
+  assert.ok(p.doctorSystem.includes('【科室】'));
+});

@@ -534,6 +534,8 @@ async function route(request, env) {
     return json(buildPromptPreview(
       url.searchParams.get('scenario') || 'consult',
       url.searchParams.get('interpreterType') || 'professional',
+      url.searchParams.get('department') || '',
+      url.searchParams.get('doctorLanguage') || '中文',
     ));
   }
 
