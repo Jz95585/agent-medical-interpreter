@@ -101,7 +101,7 @@ const DRY_SAMPLES = {
   }),
 };
 
-async function callModel(env, messages, {json = false, max = 1200, temperature = 0.3, tag = '', signal} = {}) {
+async function callModel(env, messages, {json = false, max = 1200, temperature = 0.3, tag = '', signal, retried = false} = {}) {
   if (env.DRY_RUN === '1') {
     let dry = DRY_SAMPLES[tag];
     if (!dry && tag === 'judge_professional') dry = DRY_SAMPLES.judge_pro;
@@ -136,7 +136,16 @@ async function callModel(env, messages, {json = false, max = 1200, temperature =
   const choice = payload.choices?.[0];
   const message = choice?.message;
   if (payload.error || choice?.error || choice?.finish_reason === 'error') throw err('LLM 未完成本次请求，请重试。', 502);
-  if (choice?.finish_reason === 'length') throw err('模型输出达到长度上限，请重试。', 502);
+  if (choice?.finish_reason === 'length') {
+    // 输出被截断：放宽上限重试一次，避免单条超长直接中断整场演练
+    if (!retried) {
+      const nextMax = Math.min(max * 2, 4000);
+      console.error('[llm] 输出超长，放宽上限重试', tag || '(无标签)', max, '->', nextMax);
+      return callModel(env, messages, {json, max: nextMax, temperature, tag, signal, retried: true});
+    }
+    console.error('[llm] 输出持续超长，放弃', tag || '(无标签)', max);
+    throw err('模型输出达到长度上限，请重试。', 502);
+  }
   if (!message || !message.content) throw err('模型响应缺少有效内容。', 502);
   return {message: message.content, model: payload.model, usage: payload.usage || null};
 }

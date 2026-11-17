@@ -178,45 +178,53 @@ async function runAuto(env, body, send, signal) {
   send({type: 'status', label: `开始演练：${settings.scenario} · ${settings.doctorLanguage}医生 ↔ ${state.patientInfo.language}患者`});
 
   let stopped = null;
-  while (state.round < settings.maxRounds) {
-    const terminate = await managerCheck(env, state, signal);
-    if (terminate || state.done) break;
+  let failure = null;
+  try {
+    while (state.round < settings.maxRounds) {
+      const terminate = await managerCheck(env, state, signal);
+      if (terminate || state.done) break;
 
-    state.round += 1;
-    send({type: 'round', round: state.round});
+      state.round += 1;
+      send({type: 'round', round: state.round});
 
-    // 医生 → 口译（医→患）→ 评分（终止轮的告别语也要翻译，保证对话记录完整）
-    const doctor = await doctorTurn(env, state, signal);
-    send({type: 'message', round: state.round, speaker: 'doctor', lang: settings.doctorLanguage, text: doctor.content});
+      // 医生 → 口译（医→患）→ 评分（终止轮的告别语也要翻译，保证对话记录完整）
+      const doctor = await doctorTurn(env, state, signal);
+      send({type: 'message', round: state.round, speaker: 'doctor', lang: settings.doctorLanguage, text: doctor.content});
 
-    if (doctor.content) {
-      const interp1 = await interpreterTurn(env, state, signal, 1);
-      send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: interp1.content});
-      const score1 = await judgeTurn(env, state, doctor.content, interp1.content, signal);
-      send({type: 'score', round: state.round, for: 'to_patient', score: score1});
+      if (doctor.content) {
+        const interp1 = await interpreterTurn(env, state, signal, 1);
+        send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: interp1.content});
+        const score1 = await judgeTurn(env, state, doctor.content, interp1.content, signal);
+        send({type: 'score', round: state.round, for: 'to_patient', score: score1});
+      }
+      if (doctor.terminated) { stopped = 'doctor'; break; }
+
+      // 患者 → 口译（患→医）→ 评分（同上，告别语也要翻译）
+      const patient = await patientTurn(env, state, signal);
+      send({type: 'message', round: state.round, speaker: 'patient', lang: state.patientInfo.language, text: patient.content});
+
+      let interp2Terminated = false;
+      if (patient.content) {
+        const interp2 = await interpreterTurn(env, state, signal, 2);
+        interp2Terminated = isTerminate(interp2.content);
+        send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_doctor', lang: settings.doctorLanguage, text: interp2.content});
+        const score2 = await judgeTurn(env, state, patient.content, interp2.content, signal);
+        send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
+      }
+      if (patient.terminated || interp2Terminated) { stopped = patient.terminated ? 'patient' : 'interpreter'; break; }
     }
-    if (doctor.terminated) { stopped = 'doctor'; break; }
-
-    // 患者 → 口译（患→医）→ 评分（同上，告别语也要翻译）
-    const patient = await patientTurn(env, state, signal);
-    send({type: 'message', round: state.round, speaker: 'patient', lang: state.patientInfo.language, text: patient.content});
-
-    let interp2Terminated = false;
-    if (patient.content) {
-      const interp2 = await interpreterTurn(env, state, signal, 2);
-      interp2Terminated = isTerminate(interp2.content);
-      send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_doctor', lang: settings.doctorLanguage, text: interp2.content});
-      const score2 = await judgeTurn(env, state, patient.content, interp2.content, signal);
-      send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
-    }
-    if (patient.terminated || interp2Terminated) { stopped = patient.terminated ? 'patient' : 'interpreter'; break; }
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    failure = e; // 中途失败：保留已完成部分，照常出报告与存档
+    stopped = 'error';
   }
 
   const report = scoreReport(state);
-  state.teaching = await genTeaching(env, state, signal);
-  const file = await persist('auto', state, {stopped, report}).catch(() => null);
+  if (!failure) state.teaching = await genTeaching(env, state, signal);
+  const file = await persist('auto', state, {stopped, report, error: failure ? failure.message : undefined}).catch(() => null);
   const exportId = archiveRecord('auto', state, {stopped, report});
-  send({type: 'done', stopped: stopped || 'max_rounds', rounds: state.round, report, saved: file, exportId});
+  if (failure) send({type: 'error', error: failure.message || '执行失败'});
+  send({type: 'done', stopped: stopped || 'max_rounds', rounds: state.round, report, saved: file, exportId, error: failure ? failure.message : undefined});
 }
 
 // ─── 模式3：用户扮演译员 ───

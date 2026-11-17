@@ -166,6 +166,12 @@ body {
   cursor: pointer; font-size: 12px; opacity: .7;
 }
 .speakBtn:hover { opacity: 1; }
+/* 对话区底部告警：演进出错时不再只写左侧小字 */
+.alertBox {
+  margin: 8px 14px; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  line-height: 1.5; border: 1px solid #f3b4b4; background: #fdeaea; color: #b42318;
+}
+.alertBox.warn { border-color: #f5dfbc; background: var(--orange-soft); color: #9a5b06; }
 .inputBox { border-top: 1px solid var(--border); padding: 10px 12px; background: #fbfcfd; }
 .inputHint { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 #translationInput {

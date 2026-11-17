@@ -62,16 +62,27 @@ async function init() {
   };
 
   // 疾病 → 推荐科室联动：映射表命中时自动切科室（用户仍可手动改）
-  const syncDepartment = () => {
-    const dept = p.diseaseDepartments?.[$('#disease').value.trim()];
-    if (dept && $('#department').value !== dept) {
-      $('#department').value = dept;
-      setStatus('已按疾病「' + $('#disease').value.trim() + '」推荐科室：' + dept + '（可手动调整）');
+  const syncDepartment = (notifyMissing) => {
+    const disease = $('#disease').value.trim();
+    const dept = p.diseaseDepartments?.[disease];
+    if (dept) {
+      if ($('#department').value !== dept) {
+        $('#department').value = dept;
+        setStatus('已按疾病「' + disease + '」推荐科室：' + dept + '（可手动调整）');
+      }
+      clearAlert();
+      return;
+    }
+    // 未收录的疾病不静默保留上一个科室，明确提示需要手动选择
+    if (notifyMissing && disease) {
+      const msg = '疾病「' + disease + '」暂无推荐的科室，请手动选择「医生设定」里的科室，否则会沿用上一次的值。';
+      setStatus(msg);
+      showAlert(msg, 'warn');
     }
   };
-  // input 覆盖输入后未失焦的情况；change 覆盖从 datalist 选择后失焦的情况
-  $('#disease').addEventListener('input', syncDepartment);
-  $('#disease').addEventListener('change', syncDepartment);
+  // input 只做自动切换；change 才提示未收录，避免逐字输入时反复告警
+  $('#disease').addEventListener('input', () => syncDepartment(false));
+  $('#disease').addEventListener('change', () => syncDepartment(true));
 
   // 标准病人预设：一键填充患者参数
   $('#presetSelect').innerHTML = '<option value="">— 选择后自动填充以下参数 —</option>' +
@@ -256,6 +267,7 @@ function collectParams() {
 // ─── 通用 UI ───
 function clearCols() {
   $('#chatCol').innerHTML = '';
+  clearAlert();
   $('#scoreList').innerHTML = '<p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p>';
   $('#report').hidden = true;
   $('#refBox').hidden = true;
@@ -469,6 +481,26 @@ function browserSpeak(text, lang, role) {
 
 function setStatus(text) { $('#statusLine').textContent = text; }
 
+// 对话区底部告警：出错时确保用户能立刻看到，而不是只落在左侧小字里
+function showAlert(text, kind = 'error') {
+  const el = $('#alertBox');
+  el.textContent = text;
+  el.className = 'alertBox' + (kind === 'warn' ? ' warn' : '');
+  el.hidden = false;
+  el.scrollIntoView({block: 'nearest'});
+}
+function clearAlert() {
+  const el = $('#alertBox');
+  el.hidden = true;
+  el.textContent = '';
+}
+
+// 把模型/服务错误翻译成对用户有指导意义的话
+function friendlyError(msg) {
+  if (/长度上限/.test(msg)) return '模型输出超出长度上限，本场演练已中断。请重试；若反复出现，可缩短疾病或症状描述后再试。';
+  return msg;
+}
+
 // 非 200 响应统一提取错误信息（服务端错误为 JSON {error}）
 async function respError(resp) {
   try { const d = await resp.json(); if (d.error) return d.error; } catch { /* 非 JSON */ }
@@ -541,14 +573,24 @@ function handleAutoEvent(ev) {
     }
     case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`); break;
     case 'done': {
-      const who = ev.stopped === 'doctor' ? roleLabel() : ev.stopped === 'patient' ? '患者' : ev.stopped === 'interpreter' ? '译员' : '';
-      setStatus(`演练结束（${who ? who + '终止' : '达到最大轮数'}，共 ${ev.rounds} 轮${ev.saved ? '，已存档 ' + ev.saved : ''}）`);
+      if (ev.stopped === 'error') {
+        setStatus(`演练中断，已保存前 ${ev.rounds} 轮进度${ev.saved ? '（' + ev.saved + '）' : ''}`);
+      } else {
+        const who = ev.stopped === 'doctor' ? roleLabel() : ev.stopped === 'patient' ? '患者' : ev.stopped === 'interpreter' ? '译员' : '';
+        setStatus(`演练结束（${who ? who + '终止' : '达到最大轮数'}，共 ${ev.rounds} 轮${ev.saved ? '，已存档 ' + ev.saved : ''}）`);
+      }
       renderReport(ev.report);
       showExport(ev.exportId);
       $('#startBtn').disabled = false;
       break;
     }
-    case 'error': setStatus('出错：' + ev.error); $('#startBtn').disabled = false; break;
+    case 'error': {
+      const m = friendlyError(ev.error);
+      setStatus('出错：' + m);
+      showAlert('出错：' + m);
+      $('#startBtn').disabled = false;
+      break;
+    }
   }
 }
 
@@ -562,7 +604,7 @@ async function startDrill() {
     body: JSON.stringify({scenario: $('#scenario').value, interpreterType: state.persona, scoringMode, params: collectParams()}),
   });
   const data = await resp.json();
-  if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+  if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
   state.sessionId = data.sessionId;
   state.drillLangs = {doctorLanguage: data.settings.doctorLanguage, patientLanguage: data.settings.patientLanguage};
   $('#doctorLangLabel').textContent = data.settings.doctorLanguage;
@@ -593,7 +635,7 @@ async function submitTranslation() {
       body: JSON.stringify({sessionId: state.sessionId, translation: text}),
     });
     const data = await resp.json();
-    if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+    if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
 
     if (data.score) {
       addScoreCard(data.score, `第${state.pending.round}轮 · 我的译文`);
@@ -764,7 +806,7 @@ async function askHint() {
       body: JSON.stringify({sessionId: state.sessionId}),
     });
     const data = await resp.json();
-    if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+    if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
     renderHint($('#refBox'), data, '正式口译中应先尝试自己翻译');
   } finally {
     $('#hintBtn').disabled = false;
@@ -779,7 +821,7 @@ async function startM2() {
     body: JSON.stringify({scenario: $('#scenario').value, params: collectParams()}),
   });
   const data = await resp.json();
-  if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+  if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
   state.sessionId = data.sessionId;
   state.drillLangs = {doctorLanguage: '中文', patientLanguage: data.settings.patientLanguage};
   state.m2Half = 0;
@@ -805,7 +847,7 @@ async function submitM2() {
       body: JSON.stringify({sessionId: state.sessionId, utterance: text}),
     });
     const data = await resp.json();
-    if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+    if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
     if (data.score) { addScoreCard(data.score, `第${data.half}句 · 我的表达`); state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100)); }
     if (data.finished) {
       const who = data.finished.reason === 'patient_terminate' ? '患者终止' : '达到句数上限';
@@ -837,7 +879,7 @@ async function askHintM2() {
       body: JSON.stringify({sessionId: state.sessionId}),
     });
     const data = await resp.json();
-    if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+    if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
     renderHint($('#refBoxM2'), data, '建议先自己尝试再参考');
   } finally {
     $('#hintBtnM2').disabled = false;
@@ -853,7 +895,7 @@ async function finishM2() {
       body: JSON.stringify({sessionId: state.sessionId}),
     });
     const data = await resp.json();
-    if (!resp.ok) { setStatus('出错：' + (data.error || resp.status)); return; }
+    if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
     setStatus('演练结束（你主动结束）。');
     state.lastPairs = data.utterances || [];
     renderReport(data.report);
@@ -997,7 +1039,9 @@ $('#startBtn').onclick = () => {
   $('#startBtn').disabled = true;
   setStatus(state.mode === 'auto' ? '多智能体演练进行中…' : state.mode === 'drill' ? '生成患者与医生开场…' : '生成患者设定…');
   (state.mode === 'auto' ? startAuto() : state.mode === 'drill' ? startDrill() : startM2()).catch(e => {
-    setStatus('出错：' + e.message);
+    const m = friendlyError(e.message);
+    setStatus('出错：' + m);
+    showAlert('出错：' + m);
     $('#startBtn').disabled = false;
   });
 };

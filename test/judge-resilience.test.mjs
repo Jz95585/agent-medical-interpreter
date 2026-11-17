@@ -34,7 +34,8 @@ test('评判员超长时降级重试一次并记 0 分，不抛错', async () =>
     const env = {AMI_BASE_URL: `http://127.0.0.1:${port}/v1`, AMI_API_KEY: 'test'};
     const s = state();
     const r = await judgeTurn(env, s, '原话内容', '译文内容');
-    assert.equal(mock.calls, 2, '应发起一次原始调用 + 一次降级重试');
+    // 两层重试：callModel 放宽上限重试一次，评判员再用压缩提示词重试一次
+    assert.equal(mock.calls, 4, '原始调用与压缩重试各触发一次上限放宽');
     assert.equal(r.total, 0);
     assert.equal(r.percent, 0);
     assert.match(r.comment, /0 分/);
