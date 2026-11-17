@@ -752,14 +752,18 @@ ${JSON.stringify(view)}
   return false; // 容错：两次异常/非法回复按继续处理，由外层 MAX_ROUNDS 兜底
 }
 
-// ─── 提示词预览（只读展示）：按场景+译员类型组装当前实际运行的系统提示词 ───
-// 患者人设字段用占位符标注，实际运行时由患者参数填充
+// ─── 提示词预览（只读展示）：按场景+译员类型组装系统提示词 ───
+// 所有运行时才确定的字段统一用【】占位符，不做真实取值
 function buildPromptPreview(scenarioId, interpreterType) {
   const sc = getScenario(scenarioId);
   const persona = getPersona(interpreterType);
   const state = {
-    settings: {scenario: sc.id, doctorLanguage: '中文', interpreterType},
-    doctor: {name: sc.doctorName || '张医生', roleLabel: sc.roleLabel || '医生', specialization: sc.department ? '（示例科室）' : '国际门诊前台'},
+    settings: {scenario: sc.id, doctorLanguage: '【医生语言】', interpreterType},
+    doctor: {
+      name: sc.doctorName || '张医生',
+      roleLabel: sc.roleLabel || '医生',
+      specialization: sc.department ? '【科室】' : '国际门诊前台',
+    },
     interpreter: {name: '王译员'},
     patientInfo: {
       name: '【患者姓名】', country: '【国籍】', language: '【患者语言】',

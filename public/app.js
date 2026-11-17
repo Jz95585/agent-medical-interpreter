@@ -38,7 +38,7 @@ async function init() {
     const cur = cfg.scenarios.find(x => x.id === sc.value);
     $('#scenarioDesc').textContent = cur?.description || '';
     applyRoleUI(cur);
-    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
+    reloadPromptsIfActive();
   };
   sc.onchange();
 
@@ -124,7 +124,7 @@ async function init() {
     btn.classList.add('active');
     state.persona = btn.dataset.persona;
     $('#personaLabel').textContent = cfg.interpreterTypes.find(t => t.id === state.persona)?.name || '';
-    if (document.querySelector('.pTab[data-ptab="prompts"]')?.classList.contains('active')) loadPrompts();
+    reloadPromptsIfActive();
   });
   document.querySelectorAll('.modeTab').forEach(tab => {
     tab.onclick = () => {
@@ -202,10 +202,19 @@ function showPersonaNote() {
     `<br>共 ${persona.dims.length} 个评估维度（每维 1-5 分）。综合得分按 100 分制折算：<b>维度场均分 ÷ 5 × 100</b>`;
 }
 
+function reloadPromptsIfActive() {
+  const tab = document.querySelector('.pTab[data-ptab="prompts"]');
+  if (tab && !tab.hidden && tab.classList.contains('active')) loadPrompts();
+}
+
 // 提示词只读展示：按当前场景+译员类型拉取各智能体实际运行的系统提示词
 async function loadPrompts() {
   try {
-    const resp = await fetch(`/api/prompts?scenario=${encodeURIComponent($('#scenario').value)}&interpreterType=${encodeURIComponent(state.persona)}`);
+    const qs = new URLSearchParams({
+      scenario: $('#scenario').value,
+      interpreterType: state.persona,
+    });
+    const resp = await fetch('/api/prompts?' + qs);
     const data = await resp.json();
     if (!resp.ok) { $('#promptBody').innerHTML = '<p class="empty">' + (data.error || resp.status) + '</p>'; return; }
     const sec = (title, body) => `<div class="promptSec"><h4>${title}</h4><pre>${body}</pre></div>`;

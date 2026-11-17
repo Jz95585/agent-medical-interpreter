@@ -328,7 +328,7 @@ AI 医生与 AI 患者轮流说话，用户逐句提交译文。
 
 ### 提示词预览
 
-右栏「提示词」页展示当前场景与译员类型下的五份系统提示词：医生、患者、译员、评判员、管理者。患者字段用【】占位。
+右栏「提示词」页展示当前场景、译员类型下的五份系统提示词：医生、患者、译员、评判员、管理者。所有运行时才确定的字段统一用【】占位，例如【科室】【医生语言】【患者姓名】，不显示具体取值。
 
 每轮拼接的对话记录、知识库资料、复诊既往信息属于运行时输入，不在展示范围。可见性跟随 `RUBRIC_PUBLIC`，为 0 时页签隐藏且接口返回 403。
 
@@ -463,7 +463,7 @@ npm run coverage -- --strict  # 有缺口时退出码 1，可用于上线前检�
 | GET | `/api/rubric` | — | 当前完整量规存档。`RUBRIC_PUBLIC!=1` 时返回 403 |
 | POST | `/api/rubric/save` | `{persona, personaNote[], dims[]}` | 保存某套量规。`RUBRIC_PUBLIC!=1` 时返回 403 |
 | POST | `/api/rubric/reset` | — | 恢复默认量规。`RUBRIC_PUBLIC!=1` 时返回 403 |
-| GET | `/api/prompts?scenario=&interpreterType=` | — | 五份系统提示词（医生/患者/译员/评判员/管理者）。`RUBRIC_PUBLIC!=1` 时返回 403 |
+| GET | `/api/prompts?scenario=&interpreterType=` | — | 五份系统提示词（医生/患者/译员/评判员/管理者），运行时字段以【】占位。`RUBRIC_PUBLIC!=1` 时返回 403 |
 
 ### 模式 1
 
