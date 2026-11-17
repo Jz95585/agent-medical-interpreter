@@ -206,7 +206,9 @@ ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案�
 function turnTooLong(text) {
   const t = String(text || '');
   if (t.length > 260) return {chars: t.length, limit: 260};
-  const sentences = (t.match(/[。！？!?]/g) || []).length;
+  // 英文句号只在「后接空白或结尾」时计句，避免 0.5 mg、Dr. 之类被误判
+  const cleaned = t.replace(/\b(?:Dr|Mr|Mrs|Ms|Prof|St|vs|etc)\./gi, '');
+  const sentences = (cleaned.match(/[。！？!?]|\.(?=\s|$)/g) || []).length;
   if (sentences > 4) return {sentences, limit: 4};
   return null;
 }
@@ -252,11 +254,12 @@ async function patientTurn(env, state, signal) {
   let consumerText = '';
   if (view.length <= 1) {
     const found = msd.search(info.disease_info.disease_type, 2);
-    // 精排后取第一条，只有疾病专条才能当作「这个病的科普」；相关条目不能冒充
-    const ranked = await msd.rerank(env, info.disease_info.disease_type, found.hits, signal);
-    const src = found.level === 'disease' && ranked[0]
-      ? `${ranked[0].title}：${ranked[0].content}`
-      : `${info.disease_info.disease_type}（常见疾病科普）`;
+    // 只有疾病专条才值得精排并当作「这个病的科普」；相关条目直接走通用兜底，省一次调用
+    let src = `${info.disease_info.disease_type}（常见疾病科普）`;
+    if (found.level === 'disease' && found.hits.length) {
+      const ranked = await msd.rerank(env, info.disease_info.disease_type, found.hits, signal);
+      if (ranked[0]) src = `${ranked[0].title}：${ranked[0].content}`;
+    }
     const plain = await msd.consumerize(env, info.disease_info.disease_type, src, signal);
     state.consumerPlain = plain;
     consumerText = `\n你事先在网上（患者版健康科普，内容通俗）查过这个病：「${plain}」\n`;
@@ -424,8 +427,8 @@ async function judgeWithConsistency(runOnce, dims, perfect) {
   return {ok: true, values, total, comment: pick.comment, key_point: pick.key_point, samples: all.length};
 }
 
-// ─── 评判员智能体（移植 JudgeAgent + 可编辑双量规 + 要点讲解）───
-async function judgeTurn(env, state, original, translated, signal) {
+// 评判员系统提示词（judgeTurn 使用；buildPromptPreview 复用）
+function judgeSystem(state) {
   const personaId = state.settings.interpreterType;
   const persona = getPersona(personaId);
   const dims = allDims(personaId);
@@ -433,7 +436,7 @@ async function judgeTurn(env, state, original, translated, signal) {
   const dl = state.settings.doctorLanguage || '中文';
   const dimLines = dims.map(d => `- ${d.key}: ${d.label}（${d.group}）— 关注：${d.focus}`).join('\n');
 
-  const system = `你是一名具备医学背景的专业医疗口译评估专家，精通${pl}和${dl}。你的任务是依据能力评估量规，客观严谨地评估医疗口译质量。
+  return `你是一名具备医学背景的专业医疗口译评估专家，精通${pl}和${dl}。你的任务是依据能力评估量规，客观严谨地评估医疗口译质量。
 评估量规采用三档行为锚点：
 ${getLevelAnchors().map(a => '· ' + a).join('\n')}
 各子维度如下：
@@ -453,6 +456,13 @@ ${dimLines}
 4) 各维度独立评分，不要因为某维度优秀就抬高其他维度。
 评语措辞要求：面向教学反馈，用建设性、具体的语气指出问题与改进方向；避免"完全错误""严重失职"等决绝生硬的定性表述，避免对译员个人的整体能力下结论，只评价当前句的表现。
 注意：口译员在首次接触患者时，用患者的语言简短介绍自己的口译身份与工作方式，属于符合职业规范的行为，不应因此扣分；但介绍中不得冒充医生身份。`;
+}
+
+// ─── 评判员智能体（移植 JudgeAgent + 可编辑双量规 + 要点讲解）───
+async function judgeTurn(env, state, original, translated, signal) {
+  const personaId = state.settings.interpreterType;
+  const dims = allDims(personaId);
+  const system = judgeSystem(state);
 
   const prompt = `请你根据下列原话及口译译文，使用JSON格式返回每个子维度的评分（1-5分）：
 原话：${original}
@@ -737,10 +747,11 @@ function buildPromptPreview(scenarioId, interpreterType) {
     scenarioName: sc.name,
     interpreterType: persona.name,
     doctorSystem: doctorSystem(state),
-    patientSystem: patientSystem(state),
+    patientSystem: patientSystem(state, '【宗教信仰】', '【饮食习惯】', '【文化禁忌】'),
     interpreterSystem: interpreterSystem(state),
+    judgeSystem: judgeSystem(state),
     managerSystem: managerSystem(state),
   };
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview, judgeSystem, turnTooLong};

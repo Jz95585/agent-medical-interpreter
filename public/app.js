@@ -62,13 +62,16 @@ async function init() {
   };
 
   // 疾病 → 推荐科室联动：映射表命中时自动切科室（用户仍可手动改）
-  $('#disease').addEventListener('change', () => {
+  const syncDepartment = () => {
     const dept = p.diseaseDepartments?.[$('#disease').value.trim()];
     if (dept && $('#department').value !== dept) {
       $('#department').value = dept;
       setStatus('已按疾病「' + $('#disease').value.trim() + '」推荐科室：' + dept + '（可手动调整）');
     }
-  });
+  };
+  // input 覆盖输入后未失焦的情况；change 覆盖从 datalist 选择后失焦的情况
+  $('#disease').addEventListener('input', syncDepartment);
+  $('#disease').addEventListener('change', syncDepartment);
 
   // 标准病人预设：一键填充患者参数
   $('#presetSelect').innerHTML = '<option value="">— 选择后自动填充以下参数 —</option>' +
@@ -200,6 +203,7 @@ async function loadPrompts() {
       sec('医生/前台 · 系统提示词（含终止条件）', data.doctorSystem) +
       sec('患者 · 系统提示词', data.patientSystem) +
       sec('译员 · 系统提示词', data.interpreterSystem) +
+      sec('评判员 · 系统提示词（评分量规）', data.judgeSystem) +
       sec('管理者 · 系统提示词（终止判定）', data.managerSystem);
   } catch (e) {
     $('#promptBody').innerHTML = '<p class="empty">加载失败：' + e.message + '</p>';
