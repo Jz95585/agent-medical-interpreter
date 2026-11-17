@@ -307,7 +307,8 @@ function interpreterSystem(state) {
 }
 
 // 译员跳出角色的典型表述：说明自己是谁、承诺遵守要求、索要下一轮等
-const META_REPLY_RE = /请提供(下一轮|后续|更多)|作为.{0,12}(译员|口译员)|我将(严格)?(遵守|提供)|下一轮对话|请继续(对话|提供)|please (provide|continue|give me)|as (an|the) interpreter/i;
+// 只匹配明确的角色自述与索要轮次，避免把「请提供更多信息」这类正常译文误判
+const META_REPLY_RE = /请提供(下一轮|后续)(对话|内容)?|作为.{0,12}(译员|口译员)|我将.{0,8}遵守.{0,12}(指示|要求)|我将.{0,8}(提供|给出).{0,8}(口译|翻译)|请继续(对话|提供下一轮)|please provide the next|as (an|the) interpreter/i;
 function looksLikeMeta(text) {
   return META_REPLY_RE.test(String(text || ''));
 }

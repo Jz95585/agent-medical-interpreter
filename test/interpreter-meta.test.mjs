@@ -65,3 +65,17 @@ test('正常译文不触发重试', async () => {
   assert.equal(mockState.calls, 1);
   assert.equal(r.content, OK);
 });
+
+test('含「请提供更多信息」的正常译文不被误判', async () => {
+  const legit = '请提供更多信息，我需要了解疼痛持续了多久。';
+  const {r, mockState} = await run(() => legit);
+  assert.equal(mockState.calls, 1, '不应触发纠正重试');
+  assert.equal(r.content, legit);
+});
+
+test('含「我将提供文件」的正常译文不被误判', async () => {
+  const legit = '我将提供检查报告，请您稍等。';
+  const {r, mockState} = await run(() => legit);
+  assert.equal(mockState.calls, 1);
+  assert.equal(r.content, legit);
+});
