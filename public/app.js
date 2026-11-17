@@ -69,7 +69,6 @@ async function init() {
       if ($('#department').value !== dept) {
         $('#department').value = dept;
         setStatus('已按疾病「' + disease + '」推荐科室：' + dept + '（可手动调整）');
-        reloadPromptsIfActive();
       }
       clearAlert();
       return;
@@ -127,9 +126,6 @@ async function init() {
     $('#personaLabel').textContent = cfg.interpreterTypes.find(t => t.id === state.persona)?.name || '';
     reloadPromptsIfActive();
   });
-  // 科室与医生语言会进入医生的系统提示词，变化时同步刷新提示词页
-  $('#department').addEventListener('change', reloadPromptsIfActive);
-  $('#doctorLanguage').addEventListener('change', reloadPromptsIfActive);
   document.querySelectorAll('.modeTab').forEach(tab => {
     tab.onclick = () => {
       if (tab.disabled) return;
@@ -214,12 +210,9 @@ function reloadPromptsIfActive() {
 // 提示词只读展示：按当前场景+译员类型拉取各智能体实际运行的系统提示词
 async function loadPrompts() {
   try {
-    // 带上当前表单的科室与医生语言，展示的就是实际会用的值
     const qs = new URLSearchParams({
       scenario: $('#scenario').value,
       interpreterType: state.persona,
-      department: $('#department').value,
-      doctorLanguage: $('#doctorLanguage').value,
     });
     const resp = await fetch('/api/prompts?' + qs);
     const data = await resp.json();
