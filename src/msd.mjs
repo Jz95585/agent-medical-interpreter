@@ -102,18 +102,31 @@ function search(query, topN = 3) {
 async function rerank(env, disease, hits, signal) {
   if (!hits || hits.length <= 1) return hits;
   const cand = hits.map((h, i) => ({i, title: h.title, subTopic: h.subTopic, preview: h.content.slice(0, 120)}));
-  const r = await callModel(env, [
-    {role: 'user', content: `疾病「${disease}」在诊疗手册中检索到以下候选条目。请按与该疾病临床诊疗的相关程度从高到低排序，输出严格 JSON：{"order": [条目编号数组]}\n候选条目：\n${JSON.stringify(cand)}\n只输出 JSON，不要额外文字。`},
-  ], {json: true, max: 200, temperature: 0, tag: 'rerank', signal});
+  // 精排只是优化项：单独设 10 秒超时，超时或报错一律回退原序，不拖慢首轮也不中断演练
+  const rerankSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+    : AbortSignal.timeout(10000);
+  let r;
+  try {
+    r = await callModel(env, [
+      {role: 'user', content: `疾病「${disease}」在诊疗手册中检索到以下候选条目。请按与该疾病临床诊疗的相关程度从高到低排序，输出严格 JSON：{"order": [条目编号数组]}\n候选条目：\n${JSON.stringify(cand)}\n只输出 JSON，不要额外文字。`},
+    ], {json: true, max: 200, temperature: 0, tag: 'rerank', signal: rerankSignal});
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return hits;
+  }
   try {
     const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
-    const order = Array.isArray(t.order) ? t.order.map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < hits.length) : [];
+    // 去重并补全：模型可能返回重复编号或漏掉部分候选
+    const order = Array.isArray(t.order)
+      ? [...new Set(t.order.map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < hits.length))]
+      : [];
     if (!order.length) return hits;
     const rest = hits.map((h, i) => i).filter(i => !order.includes(i));
     return [...order, ...rest].map(i => hits[i]);
   } catch (e) {
     if (signal?.aborted) throw e;
-    return hits; // 精排失败不影响主流程
+    return hits; // 解析失败也不影响主流程
   }
 }
 
