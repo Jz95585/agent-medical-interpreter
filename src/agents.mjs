@@ -717,7 +717,7 @@ ${JSON.stringify(view)}
       const reply = (await callModel(env, [
         {role: 'system', content: system},
         {role: 'user', content: prompt},
-      ], {max: 10, temperature: 0, tag: 'manager', signal})).message.trim().toUpperCase();
+      ], {max: 32, temperature: 0, tag: 'manager', signal})).message.trim().toUpperCase();
       if (reply.includes('TERMINATE')) return true;
       if (reply.includes('CONTINUE')) return false;
     } catch (e) {
