@@ -777,8 +777,14 @@ function addScoreCard(score, label, target) {
     <div class="head"><span>${label}</span>
       <span class="total ${scoreClass(score.percent / 100)}">${score.percent} / 100</span></div>
     <div class="comment"></div>
+    <div class="rev"></div>
+    <div class="polish"></div>
     <div class="kp"></div>`;
   card.querySelector('.comment').textContent = score.comment || '';
+  // 针对性修改意见：与总评重复时不再重复展示（模式2 的 comment 即修改意见）
+  const rev = score.revision && score.revision !== score.comment ? score.revision : '';
+  card.querySelector('.rev').textContent = rev ? '修改意见：' + rev : '';
+  card.querySelector('.polish').textContent = score.polish ? '润色建议：' + score.polish : '';
   card.querySelector('.kp').textContent = score.key_point ? '要点：' + score.key_point : '';
   if (target) {
     card.title = '点击定位到对应对话';
@@ -798,9 +804,11 @@ function renderFeedback(fb, pairs, kind = 'drill') {
     const p = list.find(x => x.half === r.half);
     if (!p) return '';
     if (kind === 'm2') {
-      return `<div class="fbRef"><b>第${r.half}句</b>　我的表达：${p.text}<br><span class="refLine">参考表达：${r.reference}</span></div>`;
+      return `<div class="fbRef"><b>第${r.half}句</b>　我的表达：${p.text}<br><span class="refLine">参考表达：${r.reference}</span>` +
+        (r.polish ? `<br><span class="refLine">润色版：${r.polish}</span>` : '') + `</div>`;
     }
-    return `<div class="fbRef"><b>第${r.half}句</b>　原话：${p.original}<br>我的译文：${p.translated}<br><span class="refLine">参考译文：${r.reference}</span></div>`;
+    return `<div class="fbRef"><b>第${r.half}句</b>　原话：${p.original}<br>我的译文：${p.translated}<br><span class="refLine">参考译文：${r.reference}</span>` +
+      (r.polish ? `<br><span class="refLine">润色版：${r.polish}</span>` : '') + `</div>`;
   }).join('');
   const plan = (fb.plan || []).map(x =>
     `<li><b>${x.point}</b>：${x.advice}${x.example ? `<br><span class="refLine">示例：${x.example}</span>` : ''}</li>`).join('');

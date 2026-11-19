@@ -427,6 +427,8 @@ async function scoreOnce(env, system, prompt, dims, original, translated, person
       values: Object.fromEntries(dims.map(d => [d.key, 0])),
       total: 0,
       comment: '评分服务本句未返回结果，按 0 分记录，演练继续。',
+      revision: '',
+      polish: '',
       key_point: '',
     };
   }
@@ -434,7 +436,7 @@ async function scoreOnce(env, system, prompt, dims, original, translated, person
   try {
     scores = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
   } catch {
-    scores = {comment: '评分解析失败', key_point: ''};
+    scores = {comment: '评分解析失败', revision: '', polish: '', key_point: ''};
   }
   const values = {};
   let total = 0;
@@ -448,6 +450,8 @@ async function scoreOnce(env, system, prompt, dims, original, translated, person
     values,
     total,
     comment: String(scores.comment || '').slice(0, 200),
+    revision: String(scores.revision || '').slice(0, 300),
+    polish: String(scores.polish || '').slice(0, 300),
     key_point: String(scores.key_point || '').slice(0, 100),
   };
 }
@@ -478,7 +482,7 @@ async function judgeWithConsistency(runOnce, dims, perfect) {
   }
   // 评语取总分最接近中位总分的样本，避免评语与分数脱节
   const pick = all.reduce((best, s) => Math.abs(s.total - total) < Math.abs(best.total - total) ? s : best, all[0]);
-  return {ok: true, values, total, comment: pick.comment, key_point: pick.key_point, samples: all.length};
+  return {ok: true, values, total, comment: pick.comment, revision: pick.revision, polish: pick.polish, key_point: pick.key_point, samples: all.length};
 }
 
 // 评判员系统提示词（judgeTurn 使用；buildPromptPreview 复用）
@@ -525,6 +529,8 @@ async function judgeTurn(env, state, original, translated, signal) {
 返回JSON字段：
 ${dims.map(d => `- ${d.key}`).join('\n')}
 - comment: 一句话总评（指出最突出的问题或亮点）
+- revision: 针对性修改意见——对照原话逐点指出这句译文的具体问题（漏译/增译/术语错误/人称/语气等），引用译文中的实际措辞说明错在哪、应怎么改；译文没有实质问题时输出空字符串
+- polish: 润色提升——基于译文改写出的更优版本（保留译文中正确的表达，只修必要处，不是另起炉灶的标准答案）；译文已是最优时输出空字符串
 - key_point: 面向学习者的一条关键语言服务要点讲解（话术层面，30字内）
 
 只输出JSON，不要任何额外文字。`;
@@ -540,6 +546,8 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   result.perfect = perfect;
   result.percent = Math.round(judged.total / perfect * 100); // 百分制统一展示（维度 1-5 制不变）
   result.comment = judged.comment;
+  result.revision = judged.revision; // 针对性修改意见（对照原话逐点指出问题）
+  result.polish = judged.polish;     // 润色提升（基于用户译文的改写版）
   result.key_point = judged.key_point;
   if (judged.samples > 1) result.samples = judged.samples;
   state.scores.push(result);
@@ -587,7 +595,7 @@ async function genPersonalFeedback(env, state, signal) {
 ${lines}
 用户共使用参考建议 ${state.hintUsed || 0} 次。
 请面向这位学生产出个性化反馈，输出严格 JSON：
-- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 该句的专业参考译文（第一人称、符合医疗口译规范）}
+- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 该句的专业参考译文（第一人称、符合医疗口译规范）, polish: 基于用户这句译文的润色版——保留用户译文中正确的表达，只修必要处，不要写成全新标准译文；用户译文已是最优时与译文一致即可}
 - plan: 数组，2-4 条个性化提升建议。必须针对本场的实际问题（对比原话与译文，找出漏译、增译、术语错误、句型生硬、人称不一致等），每项 {point: 问题点, advice: 具体改进方法, example: 改写示例（引用本场实际语句）}；不要输出与译文无关的通用建议。
 只输出 JSON，不要额外文字。`},
   ], {json: true, max: 2200, temperature: 0.3, tag: 'feedback', signal});
@@ -617,7 +625,7 @@ async function genDoctorFeedback(env, state, signal) {
 ${lines}
 用户共使用参考建议 ${state.hintUsed || 0} 次。
 请面向这位学员产出个性化反馈，输出严格 JSON：
-- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 针对该句的更地道${pl}表达（保持原意与医生身份）}
+- references: 数组，与上面句子一一对应，每项 {half: 句序号, reference: 针对该句的更地道${pl}表达（保持原意与医生身份）, polish: 基于该句原表达的最小修订润色版（保留正确部分，只改必要处）}
 - plan: 数组，2-4 条个性化提升建议。必须针对本场的实际问题（用词、语法、术语通俗化、信息完整性、同理心、话轮控制等），每项 {point: 问题点, advice: 具体改进方法, example: 改写示例（引用本场实际语句）}；不要输出与本场无关的通用建议。
 只输出 JSON，不要额外文字。`},
   ], {json: true, max: 2200, temperature: 0.3, tag: 'doctor_feedback', signal});
@@ -685,7 +693,8 @@ ${utterance}
 
 请输出严格 JSON：
 ${dims.map(d => `- ${d.key}`).join('\n')}
-- suggestion: 针对这句话的具体改进建议——包括改进后的${pl}表达（如原句已很好，则给一个更地道的替代表达）
+- revision: 针对性修改意见——指出这句表达的具体问题（用词/语法/术语通俗化/信息完整性/同理心等），引用原句实际措辞说明；没有实质问题时输出空字符串
+- polish: 润色提升——基于这句话改写出的更地道${pl}版本（保留原句正确部分，只改必要处）；原句已是最优时给一个同样地道的替代表达
 - reason: 给出该建议的原因（语言/医学沟通/文化层面）
 只输出 JSON，不要额外文字。`;
   const r = await callModel(env, [
@@ -696,7 +705,7 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   try {
     scores = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
   } catch {
-    scores = {suggestion: '评分解析失败', reason: ''};
+    scores = {revision: '评分解析失败', polish: '', reason: ''};
     for (const d of dims) scores[d.key] = 0;
   }
   const result = {original_words: utterance, translated_words: utterance};
@@ -709,7 +718,9 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   result.total = total;
   result.perfect = dims.length * 5;
   result.percent = Math.round(total / result.perfect * 100); // 百分制统一展示
-  result.comment = String(scores.suggestion || '').slice(0, 300);
+  result.comment = String(scores.revision || '').slice(0, 300); // 修改意见即总评（沿用 comment 字段供报告汇总）
+  result.revision = String(scores.revision || '').slice(0, 300);
+  result.polish = String(scores.polish || '').slice(0, 300);
   result.key_point = String(scores.reason || '').slice(0, 200);
   state.scores.push(result);
   return result;
