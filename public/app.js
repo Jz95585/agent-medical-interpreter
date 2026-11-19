@@ -1094,16 +1094,33 @@ async function speechInput(btnId, inputSel) {
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    setStatus('当前浏览器不支持录音，请直接键入。'); return;
+    // 手机端最常见的"不支持"其实是非 HTTPS：浏览器直接禁用麦克风 API，需说清原因
+    if (!window.isSecureContext) {
+      setStatus('麦克风需要 HTTPS 访问：当前是 HTTP 连接，浏览器已禁用录音。请改用 https 地址，或临时使用输入法自带的语音键。');
+    } else {
+      setStatus('当前浏览器不支持录音，请直接键入或使用输入法语音键。');
+    }
+    return;
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio: true});
   } catch (e) {
-    setStatus('无法访问麦克风：' + e.message); return;
+    if (e.name === 'NotAllowedError') setStatus('麦克风权限被拒绝：请在浏览器站点设置中允许麦克风，刷新后重试。');
+    else if (e.name === 'NotFoundError') setStatus('未检测到麦克风设备。');
+    else setStatus('无法访问麦克风：' + (e.message || e.name));
+    return;
   }
   const chunks = [];
-  const recorder = new MediaRecorder(stream);
+  // iOS Safari 只产出 audio/mp4（AAC），Android/桌面为 audio/webm——按浏览器能力选型，避免 iPhone 录音被按 webm 解析失败
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+    : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+  let recorder;
+  try {
+    recorder = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+  } catch {
+    recorder = new MediaRecorder(stream); // 部分旧机型不接受 mimeType 参数，退回默认
+  }
   recState = {recorder, stream, chunks};
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = async () => {
@@ -1111,10 +1128,12 @@ async function speechInput(btnId, inputSel) {
     recState = null;
     btn.textContent = '🎤 语音';
     btn.disabled = true;
-    const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+    const type = recorder.mimeType || mime || 'audio/webm';
+    const ext = /mp4|aac|m4a/.test(type) ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, {type});
     try {
       const fd = new FormData();
-      fd.append('file', blob, 'rec.webm');
+      fd.append('file', blob, 'rec.' + ext);
       const resp = await fetch('/api/asr', {method: 'POST', body: fd});
       const data = await resp.json();
       if (!resp.ok) { setStatus('语音识别失败：' + (data.error || resp.status)); return; }

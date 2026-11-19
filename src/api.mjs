@@ -578,10 +578,17 @@ async function route(request, env) {
   }
 
   if (routeName === 'POST /api/asr') {
-    // 语音识别：录音文件转发 SenseVoice
+    // 语音识别：录音文件转发 SenseVoice（失败落日志，便于排查手机端兼容问题）
     const fd = await request.formData();
-    const text = await audio.asr(env, fd);
-    return json({text});
+    try {
+      const text = await audio.asr(env, fd);
+      return json({text});
+    } catch (e) {
+      const file = fd.get('file');
+      console.error('[asr] failed:', e.message,
+        '| file:', file && file.name, file && file.type, file && file.size, 'bytes');
+      throw e;
+    }
   }
 
   if (routeName === 'POST /api/auto') {
