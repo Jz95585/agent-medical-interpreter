@@ -3,14 +3,14 @@
 // 模式3（用户扮演译员）：POST /api/drill/start + /api/drill/step —— 逐句交互
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
-import {err} from './llm.mjs';
+import {err, callModel, parseJSON} from './llm.mjs';
 import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer} from './agents.mjs';
 import * as msd from './msd.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
 import * as audio from './audio.mjs';
-import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS, DISEASE_DEPARTMENT} from './pools.mjs';
+import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS, DISEASE_DEPARTMENT, findDepartment} from './pools.mjs';
 
 const sessions = new Map(); // drill/m2 会话：sessionId → {state, pending}
 const autoRuns = new Map(); // 模式1 进行中的演练：runId → stopController（协作式中止）
@@ -194,6 +194,28 @@ async function askTutor(env, body) {
     .filter(i => i >= 1 && i <= hits.length)
     .map(i => ({n: i, title: hits[i - 1].title, topic: hits[i - 1].topic, subTopic: hits[i - 1].subTopic, source: 'MSD 诊疗手册（专业版）'}));
   return {answer, sources};
+}
+
+// ─── 疾病 → 科室匹配：本地字典优先（零成本），未收录时 AI 兜底（结果入内存缓存）───
+const deptCache = new Map();
+async function matchDepartment(env, disease) {
+  const local = findDepartment(disease);
+  if (local) return {department: local, source: 'builtin'};
+  if (deptCache.has(disease)) return {department: deptCache.get(disease), source: 'ai'};
+  let department = '';
+  try {
+    const r = await callModel(env, [
+      {role: 'system', content: `你是医院门诊分诊助手。根据疾病名称从下列科室中选择最适合初诊的一个，必须原样输出列表中的科室名；确实都不适合时输出空字符串。\n科室列表：${DEPARTMENTS.join('、')}`},
+      {role: 'user', content: `疾病：${disease}\n输出严格 JSON：{"department": "科室名"}`},
+    ], {json: true, max: 60, temperature: 0, tag: 'dept'});
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    const d = String(t.department || '').trim();
+    if (DEPARTMENTS.includes(d)) department = d; // 模型输出不在列表内时视为未匹配
+  } catch {
+    // 科室推荐是软功能：模型故障/解析失败一律按未匹配处理，不阻断页面
+  }
+  if (department) deptCache.set(disease, department);
+  return {department, source: department ? 'ai' : 'none'};
 }
 
 // ─── 模式1：自动全流程（SSE，支持协作式中止）───
@@ -550,6 +572,13 @@ async function apiFetch(request, env) {
 async function route(request, env) {
   const url = new URL(request.url);
   const routeName = `${request.method} ${url.pathname}`;
+
+  if (routeName === 'GET /api/dept') {
+    // 疾病 → 科室：本地字典优先，未收录时 AI 兜底
+    const disease = (url.searchParams.get('disease') || '').trim().slice(0, 60);
+    if (!disease) return json({department: '', source: 'none'});
+    return json(await matchDepartment(env, disease));
+  }
 
   if (routeName === 'GET /api/config') {
     return json({

@@ -64,9 +64,12 @@ async function init() {
     if (c && p.languages.includes(c.language)) $('#language').value = c.language;
   };
 
-  // 疾病 → 推荐科室联动：映射表命中时自动切科室（用户仍可手动改）
+  // 疾病 → 推荐科室联动：两级匹配——本地字典精确命中（快、零成本）→ 未收录时 AI 兜底。
+  // input 只做本地匹配（避免逐字调 LLM）；change（失焦/回车/选中候选）才触发 AI 匹配。
+  let deptReqSeq = 0; // 防竞态：连续输入时只采纳最后一次请求的结果
   const syncDepartment = (notifyMissing, silent = false) => {
     const disease = $('#disease').value.trim();
+    if (!disease) return;
     const dept = p.diseaseDepartments?.[disease];
     if (dept) {
       if ($('#department').value !== dept) {
@@ -76,14 +79,31 @@ async function init() {
       clearAlert();
       return;
     }
-    // 未收录的疾病不静默保留上一个科室，明确提示需要手动选择
-    if (notifyMissing && disease) {
-      const msg = '疾病「' + disease + '」暂无推荐的科室，请手动选择「医生设定」里的科室，否则会沿用上一次的值。';
-      setStatus(msg);
-      showAlert(msg, 'warn');
-    }
+    if (!notifyMissing) return; // input 阶段未命中：静默等 change 再走 AI 匹配
+    const token = ++deptReqSeq;
+    setStatus('正在通过 AI 匹配疾病「' + disease + '」的科室…');
+    fetch('/api/dept?disease=' + encodeURIComponent(disease))
+      .then(r => r.json())
+      .then(data => {
+        if (token !== deptReqSeq) return; // 已被更新的输入取代，丢弃过期结果
+        if (data.department) {
+          $('#department').value = data.department;
+          setStatus('已通过 AI 匹配疾病「' + disease + '」的科室：' + data.department + '（可手动调整）');
+          clearAlert();
+        } else {
+          const msg = '疾病「' + disease + '」暂无法匹配合适的科室，请手动选择「医生设定」里的科室。';
+          setStatus(msg);
+          showAlert(msg, 'warn');
+        }
+      })
+      .catch(() => {
+        if (token !== deptReqSeq) return;
+        const msg = '科室匹配服务暂时不可用，请手动选择科室。';
+        setStatus(msg);
+        showAlert(msg, 'warn');
+      });
   };
-  // input 只做自动切换；change 才提示未收录，避免逐字输入时反复告警
+  // input 只做本地字典切换；change（失焦/回车/选中候选）才触发 AI 兜底匹配
   $('#disease').addEventListener('input', () => syncDepartment(false));
   $('#disease').addEventListener('change', () => syncDepartment(true));
   // 初始渲染也同步一次：默认疾病「肾结石」→ 泌尿外科，不再停在科室表第一项（静默，不弹提示）
