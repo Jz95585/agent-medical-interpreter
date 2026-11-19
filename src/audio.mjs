@@ -18,6 +18,17 @@ function requireKey(env) {
   return env.SILICONFLOW_API_KEY;
 }
 
+// 合成前文本规范化：去除干扰合成韵律的装饰符号，减少异常断句
+function cleanForTts(t) {
+  return String(t)
+    .replace(/[[\]【】{}<>"'`*#~|｜\\]/g, '') // 括号/书名类/标记符号：模型读到会乱停顿
+    .replace(/…+|\.+/g, '。') // 连续省略号/句点归一为句号，避免拖长音或空白停顿
+    .replace(/[—–]+/g, '，') // 破折号转停顿
+    .replace(/([。！？；])\s*[，,、]+/g, '$1') // 句号后的残留逗号清理
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // 文本转语音：返回 mp3 Buffer
 async function tts(env, {text, lang, role, gender}) {
   const key = requireKey(env);
@@ -34,7 +45,7 @@ async function tts(env, {text, lang, role, gender}) {
       headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + key},
       body: JSON.stringify({
         model: 'FunAudioLLM/CosyVoice2-0.5B',
-        input: String(text).slice(0, 2000),
+        input: cleanForTts(String(text)).slice(0, 2000),
         voice,
         response_format: 'mp3',
         stream: false,

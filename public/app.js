@@ -514,7 +514,7 @@ async function speak(text, lang, role, gender) {
   await browserSpeak(text, lang, role);
 }
 
-// 浏览器合成回退：分句停顿 + 角色韵律 + 数字口语化；返回朗读完成的 Promise
+// 浏览器合成回退：角色韵律 + 数字口语化；返回朗读完成的 Promise
 function browserSpeak(text, lang, role) {
   const token = speakToken;
   const isZh = lang === '中文';
@@ -526,24 +526,30 @@ function browserSpeak(text, lang, role) {
     rate = personality === '急躁' ? 1.08 : personality === '焦虑' ? 1.02 : 0.98;
     pitch = personality === '焦虑' ? 1.1 : personality === '开朗' ? 1.05 : 1;
   }
-  const parts = splitClauses(normalizeSpeech(text, isZh));
-  return new Promise(resolve => {
-    let i = 0;
-    const next = () => {
-      if (token !== speakToken || i >= parts.length) { resolve(); return; }
-      const u = new SpeechSynthesisUtterance(parts[i++]);
-      u.lang = voice?.lang || LANG_TTS[lang] || (isZh ? 'zh-CN' : 'en-US');
-      if (voice) u.voice = voice;
-      u.rate = rate;
-      u.pitch = pitch;
-      u.onend = () => {
-        if (i >= parts.length) { resolve(); return; }
-        speakTimer = setTimeout(next, isZh ? 180 : 140);
-      };
-      speechSynthesis.speak(u);
-    };
-    next();
+  const normalized = normalizeSpeech(text, isZh);
+  const speakOne = (t) => new Promise(resolve => {
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = voice?.lang || LANG_TTS[lang] || (isZh ? 'zh-CN' : 'en-US');
+    if (voice) u.voice = voice;
+    u.rate = rate;
+    u.pitch = pitch;
+    u.onend = resolve;
+    u.onerror = resolve;
+    speechSynthesis.speak(u);
   });
+  // 在线自然音色自带气口与语调，整句合成避免与人工分句停顿叠加造成异常断句；
+  // 本地机械引擎（如 SAPI）才需要分句 + 气口改善听感
+  const natural = voice && /online|natural|neural/i.test(voice.name);
+  if (natural) return speakOne(normalized);
+  const parts = splitClauses(normalized);
+  return (async () => {
+    let i = 0;
+    while (i < parts.length) {
+      if (token !== speakToken) return;
+      await speakOne(parts[i++]);
+      if (i < parts.length) await new Promise(r => { speakTimer = setTimeout(r, isZh ? 180 : 140); });
+    }
+  })();
 }
 
 function setStatus(text) { $('#statusLine').textContent = text; }
