@@ -245,6 +245,31 @@ body {
 .dimBar { height: 5px; border-radius: 999px; background: #eef0f3; margin-top: 3px; overflow: hidden; }
 .dimBar i { display: block; height: 100%; border-radius: 999px; background: var(--green); }
 .report ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text); }
+
+/* AI 答疑 */
+#askView .desc { margin-bottom: 8px; }
+.askLog {
+  height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px; margin-bottom: 8px; background: #fafbfc; font-size: 12px;
+}
+.askLog .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+.askMsg { margin-bottom: 8px; line-height: 1.6; }
+.askMsg.user { text-align: right; }
+.askMsg.user .askBody {
+  display: inline-block; text-align: left; background: var(--green-soft); border: 1px solid var(--green);
+  border-radius: 8px; padding: 5px 8px; max-width: 92%;
+}
+.askWho { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.askMsg.user .askWho { color: var(--green); }
+.askMsg.ai .askBody { white-space: pre-wrap; }
+.askSrc {
+  margin-top: 4px; padding: 4px 7px; border-left: 3px solid var(--green);
+  background: #fff; border-radius: 0 6px 6px 0; color: var(--muted); font-size: 11px;
+}
+.askSrc.none { border-left-color: var(--border); }
+#askInput { margin-bottom: 6px; }
+.askBtn { opacity: .55; }
+.msg:hover .askBtn { opacity: 1; }
 .report li { margin-bottom: 4px; line-height: 1.5; }
 
 @media (max-width: 1080px) {

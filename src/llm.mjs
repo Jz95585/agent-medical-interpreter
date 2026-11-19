@@ -55,6 +55,7 @@ const DRY_SAMPLES = {
     ],
   }),
   manager: 'CONTINUE',
+  tutor: '这里的处理依据如下：\n1. 语言层面：原句为问诊开场问候，需保持礼貌语气并完整传达信息，漏译或改写问句目的都会造成信息失真，可改写为 "May I have your name, please?"。\n2. 医学知识层面：肾结石的典型表现与诊断要点见手册条目[1]。\n3. 伦理层面：译员应忠实转述医患双方的原意，不增译不减译，遇到可能影响诊疗的漏译风险应及时向医患双方澄清。',
   rerank: JSON.stringify({order: [0, 1, 2]}),
   feedback: JSON.stringify({
     references: [

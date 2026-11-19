@@ -641,6 +641,37 @@ ${lines}
   }
 }
 
+// ─── 答疑助手（独立 Tutor，不参与演练编排）：就演练内容提问，联动 MSD 检索深度解析 ───
+// 引用纪律：refs 由调用方经真实知识库检索传入；回答中未使用的资料不得编造来源/版本号
+async function tutorAnswer(env, {question, transcript, target, refs, doctorLanguage, patientLanguage, disease}, signal) {
+  const name = {doctor: '医生', patient: '患者', interpreter: '译员'};
+  const dialogue = (transcript || []).map(e => {
+    const who = name[e.role] || e.role;
+    const to = e.role === 'interpreter' && e.dir ? (e.dir === 'to_patient' ? '（译给患者）' : '（译给医生）') : '';
+    return `${who}${to}：${e.text}`;
+  }).join('\n') || '（暂无演练记录）';
+  const targetBlock = target?.text
+    ? `\n学生本次提问针对的是这一句：\n${name[target.role] || ''}：${target.text}${target.translated ? `\n对应译文：${target.translated}` : ''}\n`
+    : '';
+  const refsBlock = (refs || []).map((r, i) => `[${i + 1}] ${r.topic}·${r.subTopic}·《${r.title}》\n${r.content}`).join('\n---\n');
+
+  const r = await callModel(env, [
+    {role: 'system', content: `你是医疗口译演练台的答疑助教，面向正在训练的学生。学生刚经历或旁观了一场医疗口译演练，就演练内容向你提问。
+回答要求：
+1. 直接回答问题，紧扣演练中的具体语句与上下文，给出可操作的建议；涉及改译时给出改写示例（保留原语言）。
+2. 从语言表达、医学知识、诊疗流程、口译职业规范（伦理）等角度中，只展开与问题相关的角度。
+3. 引用纪律（严格执行）：只有当答案实际使用了下方检索资料时，才在对应句末标注 [编号]；资料为空或未使用时，不要编造任何来源、版本号、文献名称或页码。
+4. 用中文回答，例句保留原语言；分点简洁，总长不超过 400 字。`},
+    {role: 'user', content: `学生的问题：${question}${targetBlock}
+演练对话记录（医生语言${doctorLanguage}，患者语言${patientLanguage}，疾病主题：${disease || '未提供'}）：
+${dialogue}
+
+检索到的资料（MSD 诊疗手册·专业版）：
+${refsBlock || '（本次未检索到相关条目）'}`},
+  ], {max: 1000, temperature: 0.4, tag: 'tutor', signal});
+  return String(r.message || '').trim();
+}
+
 // ─── 剧本讲解生成（设计稿：医学知识/诊疗流程/专业术语/语言表达难点）───
 async function genTeaching(env, state, signal) {
   const scenario = getScenario(state.settings.scenario);
@@ -823,4 +854,4 @@ function buildPromptPreview(scenarioId, interpreterType) {
   };
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, tutorAnswer, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap};

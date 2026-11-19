@@ -4,7 +4,8 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer} from './agents.mjs';
+import * as msd from './msd.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
 import {buildScriptDocx} from './docx.mjs';
@@ -159,6 +160,40 @@ function buildPairs(state) {
     }
   }
   return pairs;
+}
+
+// ─── AI 答疑：就演练内容提问，联动 MSD 检索（来源只标注回答中实际引用的条目）───
+async function askTutor(env, body) {
+  const question = String(body.question || '').trim().slice(0, 500);
+  if (!question) throw err('请输入问题。');
+  const transcript = Array.isArray(body.transcript)
+    ? body.transcript.slice(-16).map(e => ({
+        role: String(e?.role || '').slice(0, 12),
+        dir: e?.dir === 'to_patient' || e?.dir === 'to_doctor' ? e.dir : '',
+        text: String(e?.text || '').slice(0, 400),
+      })).filter(e => e.text)
+    : [];
+  const target = body.target?.text ? {
+    role: String(body.target.role || '').slice(0, 12),
+    text: String(body.target.text).slice(0, 400),
+    translated: String(body.target.translated || '').slice(0, 400),
+  } : null;
+  const disease = String(body.disease || '').slice(0, 60);
+
+  // 检索：问题 + 针对句 + 疾病主题一起作为查询词，宁缺毋滥
+  const {hits} = msd.search([question, target?.text, disease].filter(Boolean).join(' '), 3);
+  const answer = await tutorAnswer(env, {
+    question, transcript, target, refs: hits,
+    doctorLanguage: String(body.doctorLanguage || '').slice(0, 20) || '中文',
+    patientLanguage: String(body.patientLanguage || '').slice(0, 20) || '',
+    disease,
+  });
+  // 只把回答中实际引用（[n] 标记）的条目作为来源返回——未引用不标注，杜绝编造版本号
+  const cited = [...new Set([...answer.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1])))];
+  const sources = cited
+    .filter(i => i >= 1 && i <= hits.length)
+    .map(i => ({n: i, title: hits[i - 1].title, topic: hits[i - 1].topic, subTopic: hits[i - 1].subTopic, source: 'MSD 诊疗手册（专业版）'}));
+  return {answer, sources};
 }
 
 // ─── 模式1：自动全流程（SSE，支持协作式中止）───
@@ -589,6 +624,12 @@ async function route(request, env) {
         '| file:', file && file.name, file && file.type, file && file.size, 'bytes');
       throw e;
     }
+  }
+
+  if (routeName === 'POST /api/ask') {
+    // AI 答疑：就演练内容提问，联动 MSD 知识库
+    const body = await request.json().catch(() => ({}));
+    return json(await askTutor(env, body));
   }
 
   if (routeName === 'POST /api/auto') {

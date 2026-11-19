@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Medical Interpreter · 医疗口译智能体演练台</title>
-<link rel="stylesheet" href="styles.css?v=20261028a">
+<link rel="stylesheet" href="styles.css?v=20261119a">
 </head>
 <body>
 <header class="topbar">
@@ -173,6 +173,7 @@
   <aside class="panel scores">
     <div class="panelTabs">
       <button class="pTab active" data-ptab="scores">演练评分</button>
+      <button class="pTab" data-ptab="ask">AI 答疑</button>
       <button class="pTab" data-ptab="rubric">量规编辑</button>
       <button class="pTab" data-ptab="prompts">提示词</button>
     </div>
@@ -197,6 +198,17 @@
         <ul id="reportKeys"></ul>
         <h4>总评摘录</h4>
         <ul id="reportComments"></ul>
+      </div>
+    </div>
+
+    <div id="askView" hidden>
+      <h2>AI 答疑</h2>
+      <p class="desc">就演练内容随时提问（如"这句为什么这样翻译"）。回答联动 MSD 诊疗手册知识库，引用处标注来源；未检索到资料时不会编造引用。</p>
+      <div id="askLog" class="askLog"><p class="empty">还没有提问。可直接输入，或点击对话气泡上的 ❓ 针对某一句提问。</p></div>
+      <textarea id="askInput" rows="3" placeholder="例如：为什么「怎么称呼」不能译成 What is your problem？"></textarea>
+      <div class="inputRow">
+        <button id="askSend" class="primary" type="button">提问</button>
+        <button id="askClear" class="ghost" type="button">清空对话</button>
       </div>
     </div>
 
@@ -231,6 +243,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=20261028a"></script>
+<script src="app.js?v=20261119a"></script>
 </body>
 </html>

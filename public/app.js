@@ -16,6 +16,9 @@ const state = {
   running: false,
   rubricPersona: 'professional',
   rubricDraft: null,  // {levelAnchors[], professional:{personaNote,dims}, dual:{...}}
+  transcript: [],     // {role, dir, text} 三种模式共用的演练记录快照，供 AI 答疑上下文
+  askTarget: null,    // {role, dir, text, translated, tag} 气泡 ❓ 定位的针对句
+  askBusy: false,
 };
 
 // ─── 初始化 ───
@@ -140,6 +143,11 @@ async function init() {
     };
   });
   $('#submitBtn').onclick = submitTranslation;
+  $('#askSend').onclick = sendAsk;
+  $('#askClear').onclick = () => {
+    $('#askLog').innerHTML = '<p class="empty">还没有提问。可直接输入，或点击对话气泡上的 ❓ 针对某一句提问。</p>';
+    state.askTarget = null;
+  };
   $('#speechBtn').onclick = () => speechInput('#speechBtn', '#translationInput');
   $('#speechBtnM2').onclick = () => speechInput('#speechBtnM2', '#utteranceInput');
   $('#hintBtn').onclick = askHint;
@@ -153,6 +161,7 @@ async function init() {
       document.querySelectorAll('.pTab').forEach(b => b.classList.remove('active'));
       tab.classList.add('active');
       $('#scoresView').hidden = tab.dataset.ptab !== 'scores';
+      $('#askView').hidden = tab.dataset.ptab !== 'ask';
       $('#rubricView').hidden = tab.dataset.ptab !== 'rubric';
       $('#promptsView').hidden = tab.dataset.ptab !== 'prompts';
       if (tab.dataset.ptab === 'rubric') loadRubric();
@@ -316,6 +325,8 @@ function resetStage() {
   clearCols();
   state.sessionId = null;
   state.pending = null;
+  state.transcript = []; // 新演练重置答疑上下文快照
+  state.askTarget = null;
   $('#inputBox').hidden = true;
   $('#statusLine').textContent = '';
   $('#startBtn').disabled = false;
@@ -348,6 +359,8 @@ function msgRole(colId) {
 }
 function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '') {
   const role = msgRole(colId);
+  // 答疑上下文快照：三种模式的所有演练话轮统一收进来
+  state.transcript.push({role, dir, text});
   const div = document.createElement('div');
   // dir：译员消息的翻译方向——to_patient 与医生同侧（左），to_doctor 与患者同侧（右）
   div.className = 'msg ' + role + (extraClass ? ' ' + extraClass : '') + (dir ? ' dir-' + dir : '');
@@ -363,6 +376,19 @@ function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '') {
   const body = document.createElement('span');
   main.append(tag, body);
   div.append(img, main);
+  // ❓ 针对本句提问：切到 AI 答疑页并带入该句上下文
+  const askBtn = document.createElement('button');
+  askBtn.className = 'speakBtn askBtn';
+  askBtn.textContent = '❓';
+  askBtn.title = '就这句向 AI 答疑提问';
+  askBtn.onclick = (e) => {
+    e.stopPropagation();
+    state.askTarget = {role, dir, text, tag: tagText};
+    $('#askInput').value = `关于这句（${tagText}）「${text.slice(0, 60)}${text.length > 60 ? '…' : ''}」，为什么要这样处理？`;
+    document.querySelector('.pTab[data-ptab="ask"]').click();
+    $('#askInput').focus();
+  };
+  main.appendChild(askBtn);
   if (lang) {
     const btn = document.createElement('button');
     btn.className = 'speakBtn';
@@ -1091,6 +1117,69 @@ async function saveRubric() {
 }
 
 function rubricStatus(text) { $('#rubricStatus').textContent = text; }
+
+// ─── AI 答疑：就演练内容提问（可针对某一句），联动 MSD 知识库 ───
+function appendAskMsg(kind, text, sources) {
+  const log = $('#askLog');
+  log.querySelector('.empty')?.remove();
+  const div = document.createElement('div');
+  div.className = 'askMsg ' + kind;
+  const who = document.createElement('div');
+  who.className = 'askWho';
+  who.textContent = kind === 'user' ? '我' : 'AI 助教';
+  const body = document.createElement('div');
+  body.className = 'askBody';
+  body.textContent = text;
+  div.append(who, body);
+  if (kind === 'ai') {
+    if (sources?.length) {
+      const src = document.createElement('div');
+      src.className = 'askSrc';
+      src.textContent = '来源：' + sources.map(s =>
+        `[${s.n}] 《${s.title}》${s.topic}${s.subTopic ? '·' + s.subTopic : ''}（${s.source}）`).join('；');
+      div.appendChild(src);
+    } else {
+      const src = document.createElement('div');
+      src.className = 'askSrc none';
+      src.textContent = '本次回答未引用外部资料';
+      div.appendChild(src);
+    }
+  }
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendAsk() {
+  const q = $('#askInput').value.trim();
+  if (!q || state.askBusy) return;
+  appendAskMsg('user', q);
+  $('#askInput').value = '';
+  state.askBusy = true;
+  $('#askSend').disabled = true;
+  const target = state.askTarget;
+  state.askTarget = null; // 针对句只作用于本次提问
+  try {
+    const resp = await fetch('/api/ask', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        question: q,
+        transcript: state.transcript,
+        target,
+        disease: $('#disease').value.trim(),
+        doctorLanguage: $('#doctorLanguage').value,
+        patientLanguage: $('#language').value,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { appendAskMsg('ai', '提问失败：' + (data.error || resp.status)); return; }
+    appendAskMsg('ai', data.answer || '（AI 未返回内容）', data.sources);
+  } catch (e) {
+    appendAskMsg('ai', '提问失败：' + friendlyError(e.message));
+  } finally {
+    state.askBusy = false;
+    $('#askSend').disabled = false;
+  }
+}
 
 // ─── 语音输入：MediaRecorder 录音 → 服务端 SenseVoice 转写（#12，替代不可靠的 Web Speech API）───
 let recState = null; // {recorder, stream, chunks}
