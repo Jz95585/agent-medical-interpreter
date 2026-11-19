@@ -45,20 +45,45 @@ function langMismatch(text, lang) {
   const kana = kanaRatio(text);
   const hangul = hangulRatio(text);
   if (lang === '中文') return cjk < 0.3 || kana >= 0.05 || hangul >= 0.05;
-  if (lang === '日文') return kana < 0.05 || hangul >= 0.05;
+  // 日文正文假名占比通常 30-60%，0.10 阈值拦住"纯中文复制混少量假名"的漏网输出
+  if (lang === '日文') return kana < 0.10 || hangul >= 0.05;
   if (lang === '韩文') return hangul < 0.2;
   return cjk > 0.05 || kana >= 0.02 || hangul >= 0.02;
 }
-async function callWithLangCheck(env, system, prompt, expectedLang, opts, signal) {
-  const r = (await callModel(env, [
+
+// 译文与源句的字符 bigram 重合率：跨语言翻译时若与原话高度重合，
+// 说明模型原样复制了原文而没有翻译（含"换种说法自我重复"的极端形态）
+function bigramOverlap(a, b) {
+  const s = String(a || '').replace(/\s/g, '');
+  const t = String(b || '').replace(/\s/g, '');
+  if (s.length < 4 || t.length < 4) return 0;
+  const grams = new Set();
+  for (let i = 0; i < s.length - 1; i++) grams.add(s.slice(i, i + 2));
+  let hit = 0;
+  const seen = new Set();
+  for (let i = 0; i < t.length - 1; i++) {
+    const g = t.slice(i, i + 2);
+    if (grams.has(g) && !seen.has(g)) { hit++; seen.add(g); }
+  }
+  return hit / Math.max(1, grams.size);
+}
+
+async function callWithLangCheck(env, system, prompt, expectedLang, opts, signal, sourceText = '', sourceLang = '') {
+  // mismatch = 语种错乱，或（源语言≠目标语言时）译文与原话高度重合＝未翻译
+  const mismatch = (r) => langMismatch(r, expectedLang)
+    || (sourceLang && sourceLang !== expectedLang && bigramOverlap(sourceText, r) > 0.7);
+  let r = (await callModel(env, [
     {role: 'system', content: system},
     {role: 'user', content: prompt},
   ], {...opts, signal})).message;
-  if (!langMismatch(r, expectedLang)) return r;
-  return (await callModel(env, [
-    {role: 'system', content: system},
-    {role: 'user', content: `${prompt}\n\n纠正：你上一次的输出语言方向错误。本次输出必须完全使用${expectedLang}，只输出对话或译文本身，不要混用其他语言。`},
-  ], {...opts, signal})).message;
+  // 最多纠正两次（总尝试 3 次）：小语种下模型一次纠正仍可能复制原文
+  for (let i = 0; i < 2 && mismatch(r); i++) {
+    r = (await callModel(env, [
+      {role: 'system', content: system},
+      {role: 'user', content: `${prompt}\n\n纠正：你上一次的输出语言方向错误${sourceText && sourceLang !== expectedLang ? '，或只是原样复制了原话而没有翻译' : ''}。本次必须把内容真正翻译成${expectedLang}，输出完全使用${expectedLang}的文字，只输出译文本身，不要混用其他语言。`},
+    ], {...opts, signal})).message;
+  }
+  return r;
 }
 
 // ─── 患者人设生成（参数面板显式值优先，缺失项由 LLM/随机补齐）───
@@ -300,6 +325,7 @@ function interpreterSystem(state) {
 请准确传达信息，也要兼顾信息传达的效率，不要添加个人的医疗意见。
 确保以第一人称翻译患者或医生的语言。翻译中不应该出现说话者说明，例如"the doctor says"，只需直接翻译内容。
 共情视角要求：当说话者表达自身感受或担忧（如 I'm really worried / it scares me）时，译文必须保留第一人称的直接感受（如 我很担心 / 这让我害怕）；严禁转述成对他人的安抚语（如 我理解您的担心），那是安抚者而非说话者本人的视角。
+文字书写要求：译文必须完全使用目标语言的固有文字书写（韩文用谚文、日文用假名+汉字、英文用拉丁字母），除人名等专有名词外不得夹杂中文词汇。
 你永远不应该回答患者或医生的问题，只需翻译双方的对话内容。
 不要添加任何其余内容（如注意、分析、语气描述、话语发出者等）。
 你不能结束对话，所以请你不要在输出中包含'TERMINATE'字样。`;
@@ -340,14 +366,17 @@ ${fewshot}请你保证翻译内容始终使用第一人称完整地传达双方�
 你的输出永远是最后一条对话的译文本身。即使最后一条是道别、感谢或确认，也必须翻译它，不能回复、确认、评论或索要下一轮。禁止出现"作为译员""请提供下一轮对话""我将遵守"之类的说明性内容。${introNote}`;
 
   const expected = flag === 1 ? pl : dl; // to_patient 用患者语言，to_doctor 用医生语言
+  // 待翻译的原话与源语言：跨语言方向时启用"译文≈原话＝未翻译"检测（治小语种下原样复制原文的错乱）
+  const lastSrc = state.log.filter(e => e.role === (flag === 1 ? 'doctor' : 'patient')).at(-1)?.content || '';
+  const srcLang = flag === 1 ? dl : pl;
   let reply = await callWithLangCheck(env, interpreterSystem(state), prompt,
-    expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+    expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal, lastSrc, srcLang);
 
   // 模型偶尔会跳出译员角色输出说明文字（如"请提供下一轮对话"），这里重试一次
   if (looksLikeMeta(reply)) {
     reply = await callWithLangCheck(env, interpreterSystem(state),
       `${prompt}\n\n纠正：你上一条没有翻译最后一条对话，而是输出了说明。请只输出最后一条对话的译文本身，不要任何解释、确认或索要下一轮。`,
-      expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+      expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal, lastSrc, srcLang);
   }
   // 仍不合格时改用最小上下文，只让它翻译最后一句话
   if (looksLikeMeta(reply)) {
@@ -355,7 +384,7 @@ ${fewshot}请你保证翻译内容始终使用第一人称完整地传达双方�
     if (last) {
       reply = await callWithLangCheck(env, interpreterSystem(state),
         `请只把下面这句话翻译成${expected}，直接输出译文，不要任何解释或确认：\n${last.content}`,
-        expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal);
+        expected, {max: 500, temperature: 0.3, tag: 'interpreter', signal}, signal, last.content, srcLang);
     }
   }
   if (looksLikeMeta(reply)) throw err('译员未返回有效译文，请重试。', 502);
@@ -783,4 +812,4 @@ function buildPromptPreview(scenarioId, interpreterType) {
   };
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview, judgeSystem, turnTooLong};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap};
