@@ -62,13 +62,13 @@ async function init() {
   };
 
   // 疾病 → 推荐科室联动：映射表命中时自动切科室（用户仍可手动改）
-  const syncDepartment = (notifyMissing) => {
+  const syncDepartment = (notifyMissing, silent = false) => {
     const disease = $('#disease').value.trim();
     const dept = p.diseaseDepartments?.[disease];
     if (dept) {
       if ($('#department').value !== dept) {
         $('#department').value = dept;
-        setStatus('已按疾病「' + disease + '」推荐科室：' + dept + '（可手动调整）');
+        if (!silent) setStatus('已按疾病「' + disease + '」推荐科室：' + dept + '（可手动调整）');
       }
       clearAlert();
       return;
@@ -83,6 +83,8 @@ async function init() {
   // input 只做自动切换；change 才提示未收录，避免逐字输入时反复告警
   $('#disease').addEventListener('input', () => syncDepartment(false));
   $('#disease').addEventListener('change', () => syncDepartment(true));
+  // 初始渲染也同步一次：默认疾病「肾结石」→ 泌尿外科，不再停在科室表第一项（静默，不弹提示）
+  syncDepartment(false, true);
 
   // 标准病人预设：一键填充患者参数
   $('#presetSelect').innerHTML = '<option value="">— 选择后自动填充以下参数 —</option>' +
