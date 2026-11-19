@@ -192,6 +192,21 @@ async function init() {
 
   // 视口尺寸变化时重判历史淡出遮罩是否需要启用
   window.addEventListener('resize', updateChatMask);
+
+  // 自动播放开关（localStorage 记忆，默认手动模式）
+  state.autoSpeak = localStorage.getItem('ami_autospeak') === '1';
+  const asBtn = $('#autoSpeakBtn');
+  const renderAutoSpeak = () => {
+    asBtn.textContent = state.autoSpeak ? '🔊 自动播放：开' : '🔊 自动播放：关';
+    asBtn.classList.toggle('on', state.autoSpeak);
+  };
+  renderAutoSpeak();
+  asBtn.onclick = () => {
+    state.autoSpeak = !state.autoSpeak;
+    localStorage.setItem('ami_autospeak', state.autoSpeak ? '1' : '0');
+    if (!state.autoSpeak) { speakQueueGen++; stopSpeakAll(); } // 关闭即停止当前朗读并清空队列
+    renderAutoSpeak();
+  };
 }
 
 function showPersonaNote() {
@@ -276,6 +291,8 @@ function collectParams() {
 // ─── 通用 UI ───
 function clearCols() {
   $('#chatCol').innerHTML = '';
+  speakQueueGen++; // 清场停止自动播放队列与当前朗读
+  stopSpeakAll();
   clearAlert();
   $('#scoreList').innerHTML = '<p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p>';
   $('#report').hidden = true;
@@ -348,13 +365,19 @@ function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '') {
     btn.className = 'speakBtn';
     btn.textContent = '🔊';
     btn.title = '朗读本条';
-    btn.onclick = (e) => { e.stopPropagation(); speak(text, lang, role, role === 'patient' ? $('#gender').value : ''); };
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      speakQueueGen++; // 手动播放打断自动播放队列
+      stopSpeakAll();
+      speak(text, lang, role, role === 'patient' ? $('#gender').value : '');
+    };
     main.appendChild(btn);
   }
   $('#chatCol').appendChild(div);
   $('#chatCol').scrollTop = 1e9;
   typeWriter(body, text);
   updateChatMask();
+  if (lang && state.autoSpeak && shouldAutoRead(role)) enqueueSpeak(text, lang, role, role === 'patient' ? $('#gender').value : '');
   return div;
 }
 
@@ -428,8 +451,33 @@ function splitClauses(text) {
 }
 
 let speakToken = 0, speakTimer = null, speakAudio = null, speakAbort = null;
+let speakQueue = Promise.resolve(), speakQueueGen = 0; // 自动播放队列；手动播放/清场时代数+1 使挂起任务失效
 
-// 朗读：中/英/日/韩优先走服务端 CosyVoice2（情感自然）；法/西或服务失败回退浏览器合成
+// 停止当前所有朗读
+function stopSpeakAll() {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  clearTimeout(speakTimer);
+  if (speakAudio) { speakAudio.pause(); speakAudio = null; }
+}
+
+// 自动播放：消息入队，播完一条再下一条；手动播放或关闭开关会让队列代数过期而跳过
+function enqueueSpeak(text, lang, role, gender) {
+  const gen = speakQueueGen;
+  speakQueue = speakQueue.then(async () => {
+    if (!state.autoSpeak || gen !== speakQueueGen) return;
+    await speak(text, lang, role, gender);
+  }).catch(() => {});
+}
+
+// 自动播放资格：模式1 三个角色全读；模式3 读医患原话（译员是用户自己）；模式2 只读患者
+function shouldAutoRead(role) {
+  if (role === 'patient') return true;
+  if (role === 'interpreter') return state.mode === 'auto';
+  if (role === 'doctor') return state.mode !== 'm2';
+  return false;
+}
+
+// 立即朗读（手动点击或队列内部调用），返回播放完成的 Promise；可被下一次 speak 打断
 async function speak(text, lang, role, gender) {
   if (!('speechSynthesis' in window)) { setStatus('当前浏览器不支持语音合成'); return; }
   speechSynthesis.cancel();
@@ -449,8 +497,10 @@ async function speak(text, lang, role, gender) {
       if (!resp.ok) throw new Error(await respError(resp));
       const blob = await resp.blob();
       if (token !== speakToken) return; // 已被新的朗读打断
-      speakAudio = new Audio(URL.createObjectURL(blob));
-      await speakAudio.play();
+      const audio = new Audio(URL.createObjectURL(blob));
+      speakAudio = audio;
+      await audio.play();
+      await new Promise(res => { audio.onended = res; audio.onerror = res; });
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
@@ -458,10 +508,10 @@ async function speak(text, lang, role, gender) {
       setStatus('服务端朗读失败，回退浏览器合成：' + e.message);
     }
   }
-  browserSpeak(text, lang, role);
+  await browserSpeak(text, lang, role);
 }
 
-// 浏览器合成回退：分句停顿 + 角色韵律 + 数字口语化
+// 浏览器合成回退：分句停顿 + 角色韵律 + 数字口语化；返回朗读完成的 Promise
 function browserSpeak(text, lang, role) {
   const token = speakToken;
   const isZh = lang === '中文';
@@ -474,18 +524,23 @@ function browserSpeak(text, lang, role) {
     pitch = personality === '焦虑' ? 1.1 : personality === '开朗' ? 1.05 : 1;
   }
   const parts = splitClauses(normalizeSpeech(text, isZh));
-  let i = 0;
-  const next = () => {
-    if (token !== speakToken || i >= parts.length) return;
-    const u = new SpeechSynthesisUtterance(parts[i++]);
-    u.lang = voice?.lang || LANG_TTS[lang] || (isZh ? 'zh-CN' : 'en-US');
-    if (voice) u.voice = voice;
-    u.rate = rate;
-    u.pitch = pitch;
-    u.onend = () => { speakTimer = setTimeout(next, isZh ? 180 : 140); };
-    speechSynthesis.speak(u);
-  };
-  next();
+  return new Promise(resolve => {
+    let i = 0;
+    const next = () => {
+      if (token !== speakToken || i >= parts.length) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(parts[i++]);
+      u.lang = voice?.lang || LANG_TTS[lang] || (isZh ? 'zh-CN' : 'en-US');
+      if (voice) u.voice = voice;
+      u.rate = rate;
+      u.pitch = pitch;
+      u.onend = () => {
+        if (i >= parts.length) { resolve(); return; }
+        speakTimer = setTimeout(next, isZh ? 180 : 140);
+      };
+      speechSynthesis.speak(u);
+    };
+    next();
+  });
 }
 
 function setStatus(text) { $('#statusLine').textContent = text; }

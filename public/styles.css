@@ -129,6 +129,8 @@ body {
 }
 .chatHeads { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: #fbfcfd; }
 .chatHeads .colHead { border: 0; background: transparent; padding: 0; }
+.autoSpeakBtn { margin-left: auto; padding: 4px 12px; font-size: 12px; border-radius: 999px; }
+.autoSpeakBtn.on { border-color: var(--green); color: var(--green); background: var(--green-soft); }
 .colHead {
   font-size: 13px; font-weight: 600;
   display: flex; align-items: center; gap: 8px;
