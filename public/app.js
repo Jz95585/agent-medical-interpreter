@@ -296,6 +296,7 @@ function clearCols() {
   speakQueueGen++; // 清场停止自动播放队列与当前朗读
   stopSpeakAll();
   clearAlert();
+  $('#stopBtn').hidden = true;
   $('#scoreList').innerHTML = '<p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p>';
   $('#report').hidden = true;
   $('#refBox').hidden = true;
@@ -595,7 +596,9 @@ function dirLabel(dir) {
 // ─── 模式1：自动演练（SSE）───
 async function startAuto() {
   clearCols();
+  state.autoRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const body = {
+    runId: state.autoRunId,
     scenario: $('#scenario').value,
     interpreterType: state.persona,
     params: collectParams(),
@@ -639,7 +642,11 @@ function handleAutoEvent(ev) {
     }
     case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`, lastMsg('.msg.interpreter')); break;
     case 'done': {
-      if (ev.stopped === 'error') {
+      $('#stopBtn').hidden = true;
+      $('#stopBtn').disabled = false;
+      if (ev.stopped === 'user_abort') {
+        setStatus(`已中止演练（保留 ${ev.rounds} 轮进度），报告与剧本已生成${ev.saved ? '，已存档 ' + ev.saved : ''}`);
+      } else if (ev.stopped === 'error') {
         setStatus(`演练中断，已保存前 ${ev.rounds} 轮进度${ev.saved ? '（' + ev.saved + '）' : ''}`);
       } else {
         const who = ev.stopped === 'doctor' ? roleLabel() : ev.stopped === 'patient' ? '患者' : ev.stopped === 'interpreter' ? '译员' : '';
@@ -1121,13 +1128,56 @@ async function speechInput(btnId, inputSel) {
 $('#startBtn').onclick = () => {
   resetStage();
   $('#startBtn').disabled = true;
+  $('#stopBtn').hidden = state.mode !== 'auto'; // 模式1 演练中显示"中止演练"
   setStatus(state.mode === 'auto' ? '多智能体演练进行中…' : state.mode === 'drill' ? '生成患者与医生开场…' : '生成患者设定…');
   (state.mode === 'auto' ? startAuto() : state.mode === 'drill' ? startDrill() : startM2()).catch(e => {
     const m = friendlyError(e.message);
     setStatus('出错：' + m);
     showAlert('出错：' + m);
     $('#startBtn').disabled = false;
+    $('#stopBtn').hidden = true;
   });
+};
+
+// 模式1 中止：协作式终止——服务端当前步骤收尾后照常产出部分报告与存档
+$('#stopBtn').onclick = async () => {
+  if (!state.autoRunId) return;
+  $('#stopBtn').disabled = true;
+  setStatus('正在中止演练，生成已完成部分的报告…');
+  const resp = await fetch('/api/auto/stop', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({runId: state.autoRunId}),
+  });
+  if (!resp.ok) {
+    setStatus('中止失败：' + await respError(resp));
+    $('#stopBtn').disabled = false;
+  }
+  // 成功后由 SSE 的 done 事件（stopped=user_abort）收尾：渲染报告、复位按钮
+};
+
+// 模式3 中止：随时终止并结算已完成部分（报告 + 剧本导出）
+$('#stopDrillBtn').onclick = async () => {
+  if (!state.sessionId || state.running) return;
+  $('#stopDrillBtn').disabled = true;
+  try {
+    const resp = await fetch('/api/drill/finish', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sessionId: state.sessionId}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { setStatus('中止失败：' + (data.error || resp.status)); return; }
+    setStatus(`已中止演练（保留 ${data.rounds || 0} 句进度），报告与剧本已生成`);
+    state.lastPairs = data.pairs || [];
+    renderReport(data.report);
+    renderFeedback(data.feedback);
+    showExport(data.exportId);
+    state.sessionId = null;
+    state.pending = null;
+    $('#inputBox').hidden = true;
+    $('#startBtn').disabled = false;
+  } finally {
+    $('#stopDrillBtn').disabled = false;
+  }
 };
 
 init().catch(e => { $('#modelBadge').textContent = '初始化失败：' + e.message; });

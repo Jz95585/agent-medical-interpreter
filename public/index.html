@@ -131,6 +131,7 @@
     </label>
 
     <button id="startBtn" class="primary">开始演练</button>
+    <button id="stopBtn" class="ghost wfull" hidden>⏹ 中止演练（保留已完成部分并出报告）</button>
     <p id="statusLine" class="status"></p>
   </aside>
 
@@ -151,6 +152,7 @@
       <div class="inputRow">
         <button id="hintBtn" class="ghost" title="卡住了？让 AI 给出当下应当说的译文">💡 参考建议</button>
         <button id="speechBtn" class="ghost" title="语音输入（录音后由服务端识别转写）">🎤 语音</button>
+        <button id="stopDrillBtn" class="ghost" title="随时终止演练，已完成部分照常出报告与剧本">⏹ 中止</button>
         <button id="submitBtn" class="primary">提交译文</button>
       </div>
     </div>
@@ -161,7 +163,7 @@
       <div class="inputRow">
         <button id="hintBtnM2" class="ghost" title="卡住了？让 AI 给出当下应当说的英文">💡 参考建议</button>
         <button id="speechBtnM2" class="ghost" title="语音输入（录音后由服务端识别转写）">🎤 语音</button>
-        <button id="finishBtnM2" class="ghost" title="提前结束并生成报告">结束演练</button>
+        <button id="finishBtnM2" class="ghost" title="随时终止演练，已完成部分照常出报告与剧本">⏹ 中止演练</button>
         <button id="submitBtnM2" class="primary">发送</button>
       </div>
     </div>

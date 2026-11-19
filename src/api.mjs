@@ -12,6 +12,7 @@ import * as audio from './audio.mjs';
 import {COUNTRIES, LANGUAGES, RELIGIONS, DIETS, TABOOS, PERSONALITIES, LITERACIES, GENDERS, DEPARTMENTS, DOCTOR_LANGUAGES, DISEASE_EXAMPLES, PRESET_PATIENTS, DISEASE_DEPARTMENT} from './pools.mjs';
 
 const sessions = new Map(); // drill/m2 会话：sessionId → {state, pending}
+const autoRuns = new Map(); // 模式1 进行中的演练：runId → stopController（协作式中止）
 
 // 公网部署时清理被放弃的会话（2 小时无活动即释放）
 setInterval(() => {
@@ -160,8 +161,8 @@ function buildPairs(state) {
   return pairs;
 }
 
-// ─── 模式1：自动全流程（SSE）───
-async function runAuto(env, body, send, signal) {
+// ─── 模式1：自动全流程（SSE，支持协作式中止）───
+async function runAuto(env, body, send, signal, runId, stopCtrl) {
   const settings = {
     mode: 'auto',
     scenario: body.scenario || 'consult',
@@ -171,9 +172,11 @@ async function runAuto(env, body, send, signal) {
     doctorLanguage: (body.params && body.params.doctorLanguage) || '中文',
   };
   const state = makeState(settings);
+  // 协作式中止：用户点"中止演练"触发 stopCtrl.abort()，当前步骤收尾后照常产出报告与存档
+  const runSignal = stopCtrl ? AbortSignal.any([signal, stopCtrl.signal]) : signal;
 
   send({type: 'status', label: '生成患者人设（信息生成器）'});
-  state.patientInfo = await makePatientInfo(env, {scenario: settings.scenario, params: settings.params}, signal);
+  state.patientInfo = await makePatientInfo(env, {scenario: settings.scenario, params: settings.params}, runSignal);
   send({type: 'info', patientInfo: state.patientInfo});
   send({type: 'status', label: `开始演练：${settings.scenario} · ${settings.doctorLanguage}医生 ↔ ${state.patientInfo.language}患者`});
 
@@ -181,48 +184,55 @@ async function runAuto(env, body, send, signal) {
   let failure = null;
   try {
     while (state.round < settings.maxRounds) {
-      const terminate = await managerCheck(env, state, signal);
+      const terminate = await managerCheck(env, state, runSignal);
       if (terminate || state.done) break;
 
       state.round += 1;
       send({type: 'round', round: state.round});
 
       // 医生 → 口译（医→患）→ 评分（终止轮的告别语也要翻译，保证对话记录完整）
-      const doctor = await doctorTurn(env, state, signal);
+      const doctor = await doctorTurn(env, state, runSignal);
       send({type: 'message', round: state.round, speaker: 'doctor', lang: settings.doctorLanguage, text: doctor.content});
 
       if (doctor.content) {
-        const interp1 = await interpreterTurn(env, state, signal, 1);
+        const interp1 = await interpreterTurn(env, state, runSignal, 1);
         send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: interp1.content});
-        const score1 = await judgeTurn(env, state, doctor.content, interp1.content, signal);
+        const score1 = await judgeTurn(env, state, doctor.content, interp1.content, runSignal);
         send({type: 'score', round: state.round, for: 'to_patient', score: score1});
       }
       if (doctor.terminated) { stopped = 'doctor'; break; }
 
       // 患者 → 口译（患→医）→ 评分（同上，告别语也要翻译）
-      const patient = await patientTurn(env, state, signal);
+      const patient = await patientTurn(env, state, runSignal);
       send({type: 'message', round: state.round, speaker: 'patient', lang: state.patientInfo.language, text: patient.content});
 
       let interp2Terminated = false;
       if (patient.content) {
-        const interp2 = await interpreterTurn(env, state, signal, 2);
+        const interp2 = await interpreterTurn(env, state, runSignal, 2);
         interp2Terminated = isTerminate(interp2.content);
         send({type: 'message', round: state.round, speaker: 'interpreter', dir: 'to_doctor', lang: settings.doctorLanguage, text: interp2.content});
-        const score2 = await judgeTurn(env, state, patient.content, interp2.content, signal);
+        const score2 = await judgeTurn(env, state, patient.content, interp2.content, runSignal);
         send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
       }
       if (patient.terminated || interp2Terminated) { stopped = patient.terminated ? 'patient' : 'interpreter'; break; }
     }
   } catch (e) {
-    if (signal?.aborted) throw e;
-    failure = e; // 中途失败：保留已完成部分，照常出报告与存档
-    stopped = 'error';
+    autoRuns.delete(runId);
+    if (stopCtrl?.signal.aborted) {
+      stopped = 'user_abort'; // 用户主动中止：保留已完成部分，照常出报告与存档
+    } else if (signal?.aborted) {
+      throw e; // 连接断开（用户关页面），无接收方，直接终止
+    } else {
+      failure = e; // 中途失败：保留已完成部分，照常出报告与存档
+      stopped = 'error';
+    }
   }
 
   const report = scoreReport(state);
   if (!failure) state.teaching = await genTeaching(env, state, signal);
   const file = await persist('auto', state, {stopped, report, error: failure ? failure.message : undefined}).catch(() => null);
   const exportId = archiveRecord('auto', state, {stopped, report});
+  autoRuns.delete(runId);
   if (failure) send({type: 'error', error: failure.message || '执行失败'});
   send({type: 'done', stopped: stopped || 'max_rounds', rounds: state.round, report, saved: file, exportId, error: failure ? failure.message : undefined});
 }
@@ -314,14 +324,12 @@ async function drillStep(env, body) {
   }
 
   if (state.done) {
-    state.pairs = buildPairs(state);
-    state.round = Math.ceil(sess.half / 2);
-    state.teaching = await genTeaching(env, state, undefined);
-    result.feedback = await genPersonalFeedback(env, state, undefined).catch(() => null); // #3：逐句参考译文 + 个性化提升方案
-    result.pairs = state.pairs;
-    result.report = scoreReport(state);
-    result.saved = await persist('drill', state, {report: result.report, pairs: state.pairs}).catch(() => null);
-    result.exportId = archiveRecord('drill', state, {report: result.report, pairs: state.pairs});
+    const fin = await finalizeDrill(env, state, sess);
+    result.feedback = fin.feedback;
+    result.pairs = fin.pairs;
+    result.report = fin.report;
+    result.saved = fin.saved;
+    result.exportId = fin.exportId;
     sessions.delete(body.sessionId);
   } else {
     const sc = getScenario(state.settings.scenario);
@@ -329,6 +337,31 @@ async function drillStep(env, body) {
     result.hint = kps.length ? kps[(pending.round - 1) % kps.length] : null;
   }
   return json({next, ...result});
+}
+
+// 模式3 收尾共用：部分对话也产出完整报告、个性化反馈与存档（自然结束与用户中止共用）
+async function finalizeDrill(env, state, sess, extra = {}) {
+  state.pairs = buildPairs(state);
+  state.round = Math.ceil(sess.half / 2);
+  state.teaching = await genTeaching(env, state, undefined);
+  const feedback = await genPersonalFeedback(env, state, undefined).catch(() => null); // #3：逐句参考译文 + 个性化提升方案
+  const report = scoreReport(state);
+  const saved = await persist('drill', state, {report, pairs: state.pairs, ...extra}).catch(() => null);
+  const exportId = archiveRecord('drill', state, {report, pairs: state.pairs});
+  return {report, feedback, pairs: state.pairs, saved, exportId};
+}
+
+// 用户中止模式3：随时终止并产出部分报告（复盘用）
+async function drillFinish(env, body) {
+  const sess = sessions.get(body.sessionId);
+  if (!sess) throw err('会话不存在或已过期。', 404);
+  touch(sess);
+  const {state} = sess;
+  if (state.done) throw err('演练已结束。');
+  state.done = true;
+  const fin = await finalizeDrill(env, state, sess, {stopped: 'user_abort'});
+  sessions.delete(body.sessionId);
+  return json({ok: true, stopped: 'user_abort', rounds: state.round, ...fin});
 }
 
 // 参考建议：用户卡住时给出当下应当说的译文（设计稿模式3）
@@ -553,7 +586,19 @@ async function route(request, env) {
 
   if (routeName === 'POST /api/auto') {
     const body = await request.json().catch(() => ({}));
-    return sse((send, signal) => runAuto(env, body, send, signal), request.signal);
+    const runId = String(body.runId || '').slice(0, 48) || newSessionId();
+    const stopCtrl = new AbortController();
+    autoRuns.set(runId, stopCtrl);
+    return sse((send, sig) => runAuto(env, body, send, sig, runId, stopCtrl), request.signal);
+  }
+
+  if (routeName === 'POST /api/auto/stop') {
+    // 协作式中止：触发后演练在当前步骤收尾，照常产出部分报告与存档（done.stopped=user_abort）
+    const body = await request.json().catch(() => ({}));
+    const ctrl = autoRuns.get(String(body.runId || ''));
+    if (!ctrl) throw err('演练不存在或已结束。', 404);
+    ctrl.abort();
+    return json({ok: true});
   }
 
   if (routeName === 'POST /api/drill/start') {
@@ -564,6 +609,12 @@ async function route(request, env) {
   if (routeName === 'POST /api/drill/step') {
     const body = await request.json().catch(() => ({}));
     return drillStep(env, body);
+  }
+
+  if (routeName === 'POST /api/drill/finish') {
+    // 用户中止模式3：随时终止并产出部分报告与存档
+    const body = await request.json().catch(() => ({}));
+    return drillFinish(env, body);
   }
 
   if (routeName === 'POST /api/drill/hint') {
