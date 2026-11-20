@@ -203,20 +203,26 @@ const deptCache = new Map();
 async function matchDepartment(env, disease) {
   const local = findDepartment(disease);
   if (local) return {department: local, source: 'builtin'};
-  if (deptCache.has(disease)) return {department: deptCache.get(disease), source: 'ai'};
+  if (deptCache.has(disease)) {
+    const cached = deptCache.get(disease);
+    return {department: cached, source: cached ? 'ai' : 'none'};
+  }
   let department = '';
   try {
+    // 软功能：单独 8 秒超时，模型卡住时不至于让表单等两分钟
     const r = await callModel(env, [
       {role: 'system', content: `你是医院门诊分诊助手。根据疾病名称从下列科室中选择最适合初诊的一个，必须原样输出列表中的科室名；确实都不适合时输出空字符串。\n科室列表：${DEPARTMENTS.join('、')}`},
       {role: 'user', content: `疾病：${disease}\n输出严格 JSON：{"department": "科室名"}`},
-    ], {json: true, max: 60, temperature: 0, tag: 'dept'});
+    ], {json: true, max: 60, temperature: 0, tag: 'dept', signal: AbortSignal.timeout(8000)});
     const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
     const d = String(t.department || '').trim();
     if (DEPARTMENTS.includes(d)) department = d; // 模型输出不在列表内时视为未匹配
   } catch {
-    // 科室推荐是软功能：模型故障/解析失败一律按未匹配处理，不阻断页面
+    // 科室推荐是软功能：超时/故障/解析失败一律按未匹配处理，不阻断页面
   }
-  if (department) deptCache.set(disease, department);
+  // 未匹配也缓存，避免同一个未知疾病反复触发调用；上限 200 条防止无限增长
+  if (deptCache.size >= 200) deptCache.delete(deptCache.keys().next().value);
+  deptCache.set(disease, department);
   return {department, source: department ? 'ai' : 'none'};
 }
 
@@ -437,6 +443,8 @@ async function drillStep(env, body) {
         sess.phase = 'main';
         state.intakeDone = true;
       } else {
+        // 患者的回答要先展示，再进入原则阐述任务
+        result.reply = {lang: state.patientInfo.language, text: pat.content};
         sess.phase = 'intake_principles';
         sess.pending = {original: intakePrinciplesTask(), target: 'to_patient', round: 0};
         next = {
