@@ -187,9 +187,12 @@ async function doctorTurn(env, state, signal) {
   const intakeNote = state.intakeDone
     ? `诊前接入已完成：译员已向患者自我介绍并核对了患者身份${state.patientInfo.name ? '（患者姓名：' + state.patientInfo.name + '）' : ''}，患者${state.intake?.familiar ? '有医疗口译使用经验' : '是首次使用医疗口译服务'}。你的开场不需要再自我介绍或重新核对身份，直接问候并进入问诊正题。`
     : '';
+  const blockNote = state.terminationBlocked
+    ? `\n注意：上一轮尝试结束对话，但审核未通过：${state.terminationBlocked}。请继续完成诊断与治疗方案，不要提前结束。\n`
+    : '';
   const prompt = `你和口译员已有下面的对话：
 ${convText}
-${refText}
+${refText}${blockNote}
 ${scenario.id === 'followup' && view.length <= 1 ? `本次复诊针对的疾病是「${state.patientInfo.disease_info.disease_type}」，患者既往情况——症状：${state.patientInfo.disease_info.symptoms.join('、')}；病史：${state.patientInfo.disease_info.medical_history}。请围绕这一疾病复诊，不要询问与本疾病无关的症状。\n` : ''}
 请你根据上述对话内容，继续以${state.doctor.roleLabel}的身份回答口译员。
 ${view.length <= 1 ? (intakeNote || scenario.doctorOpening) : ''}
@@ -303,7 +306,8 @@ async function patientTurn(env, state, signal) {
   const prompt = `你和医生已有下面的对话：
 ${convText}
 ${consumerText}
-请你根据上述对话内容，继续以患者的身份回答口译员，如果没有对话内容，请你先描述你的症状，如果你认为对话可以结束，直接回复"TERMINATE"。`;
+请你根据上述对话内容，继续以患者的身份回答口译员，如果没有对话内容，请你先描述你的症状，如果你认为对话可以结束，直接回复"TERMINATE"。
+${state.terminationBlocked ? `注意：对话还不能结束，医生尚未完成明确诊断与治疗方案。请继续配合问诊，不要输出 TERMINATE。` : ''}`;
 
   const reply = await callWithLangCheck(env, system, prompt, info.language,
     {max: 500, temperature: 0.6, tag: 'patient', signal}, signal);
@@ -901,6 +905,38 @@ async function genM2Hint(env, state, signal) {
   }
 }
 
+// ─── 诊断达成判定：终止前的硬门槛 ───
+// 只有医生给出与患者疾病同义或临床相关的诊断、给出治疗方案、且患者无疑问时才允许结束
+async function diagnosisReady(env, state, signal) {
+  const disease = state.patientInfo.disease_info.disease_type;
+  const view = state.log.filter(e => e.stage !== 'intake').map(e => ({role: e.role, content: e.content}));
+  if (!view.length) return {sufficient: false, reason: '对话尚未开始'};
+  try {
+    const r = await callModel(env, [
+      {role: 'system', content: '你是医疗对话审核员，判断医生是否已经完成诊断与处置。只输出 JSON。'},
+      {role: 'user', content: `患者设定的疾病是「${disease}」。允许同义或临床相关的诊断，例如设定肾结石时，医生诊断为输尿管结石也可以。
+对话记录：${JSON.stringify(view)}
+
+请输出严格 JSON：
+- diagnosis: 医生给出的诊断，没有则空字符串
+- treatment: 医生给出的治疗方案或医嘱，没有则空字符串
+- sufficient: 布尔值，以下三条同时满足才为 true：1) 诊断明确且与患者疾病同义或临床相关；2) 给出了治疗方案或明确医嘱；3) 患者没有未解答的疑问
+- reason: 未完成的原因，sufficient 为 true 时留空`},
+    ], {json: true, max: 300, temperature: 0, tag: 'diagnosis_check', signal});
+    const t = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return {
+      sufficient: !!t.sufficient,
+      diagnosis: String(t.diagnosis || ''),
+      treatment: String(t.treatment || ''),
+      reason: String(t.reason || ''),
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    // 判定不可用时退回原有终止逻辑，避免演练卡在无法判定的状态
+    return {sufficient: true, degraded: true, reason: '诊断判定不可用，按原逻辑结束'};
+  }
+}
+
 // ─── 管理智能体：终止判定（移植 ManagerAgent.check_terminate，容错版，终止条件随场景）───
 // 管理者系统提示词（managerCheck 使用；buildPromptPreview 复用）
 function managerSystem(state) {
@@ -967,4 +1003,4 @@ function buildPromptPreview(scenarioId, interpreterType) {
   };
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, tutorAnswer, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, tutorAnswer, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn, diagnosisReady};

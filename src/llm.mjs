@@ -56,6 +56,7 @@ const DRY_SAMPLES = {
   }),
   manager: 'CONTINUE',
   dept: JSON.stringify({department: '消化内科'}),
+  diagnosis_check: JSON.stringify({diagnosis: '肾结石', treatment: '多饮水，疼痛时服用止痛药', sufficient: true, reason: ''}),
   intake_reception: '王译员，这位是 Olivia Martin，说英文，今天第一次来我们国际门诊看泌尿外科，麻烦你负责接待翻译。',
   intake_open: 'Hello! Please have a seat. I am Wang, the medical interpreter for today\'s visit — I will interpret everything the doctor says. Could you confirm your full name and date of birth? And have you ever worked with a medical interpreter before?',
   intake_principles: 'No problem. Here is how it works: I will interpret the doctor\'s words sentence by sentence in the first person, and do the same for what you tell me. If anything is unclear, you can stop me anytime and I will clarify with the doctor. Everything discussed here is kept strictly confidential.',
