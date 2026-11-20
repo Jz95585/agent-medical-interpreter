@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
-    "coverage": "node scripts/coverage.mjs"
+    "coverage": "node scripts/coverage.mjs",
+    "model-compare": "node scripts/model-compare.mjs"
   },
   "engines": {
     "node": ">=22"
