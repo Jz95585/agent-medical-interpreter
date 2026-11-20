@@ -717,7 +717,7 @@ function handleAutoEvent(ev) {
       } else if (ev.stopped === 'error') {
         setStatus(`演练中断，已保存前 ${ev.rounds} 轮进度${ev.saved ? '（' + ev.saved + '）' : ''}`);
       } else {
-        const who = ev.stopped === 'doctor' ? roleLabel() : ev.stopped === 'patient' ? '患者' : ev.stopped === 'interpreter' ? '译员' : '';
+        const who = ev.stopped === 'doctor' ? roleLabel() : ev.stopped === 'patient' ? '患者' : ev.stopped === 'interpreter' ? '译员' : ev.stopped === 'manager' ? '管理者' : '';
         setStatus(`演练结束（${who ? who + '终止' : '达到最大轮数'}，共 ${ev.rounds} 轮${ev.saved ? '，已存档 ' + ev.saved : ''}）`);
       }
       renderReport(ev.report);

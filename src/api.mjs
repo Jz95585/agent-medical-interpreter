@@ -4,7 +4,7 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err, callModel, parseJSON} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn, diagnosisReady} from './agents.mjs';
 import * as msd from './msd.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
@@ -264,7 +264,7 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
     scenario: body.scenario || 'consult',
     interpreterType: listPersonas().some(p => p.id === body.interpreterType) ? body.interpreterType : 'professional',
     params: body.params || {},
-    maxRounds: Math.min(30, Math.max(1, Number(body.maxRounds) || 30)),
+    maxRounds: Math.min(60, Math.max(1, Number(body.maxRounds) || 60)),
     doctorLanguage: (body.params && body.params.doctorLanguage) || '中文',
   };
   const state = makeState(settings);
@@ -297,9 +297,20 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
     state.intakeDone = true;
     send({type: 'status', label: '进入问诊环节…'});
 
+    // 终止门槛：任何一方想结束，都先确认诊断与方案已完成，否则继续对话
+    const canEnd = async (who) => {
+      const check = await diagnosisReady(env, state, runSignal);
+      if (check.sufficient) { state.terminationBlocked = ''; return true; }
+      state.terminationBlocked = check.reason || '诊断或治疗方案尚未完成';
+      send({type: 'status', label: `暂不能结束（${who}请求终止）：${state.terminationBlocked}`});
+      return false;
+    };
+
     while (state.round < settings.maxRounds) {
       const terminate = await managerCheck(env, state, runSignal);
-      if (terminate || state.done) break;
+      if (terminate) {
+        if (await canEnd('管理者')) { stopped = 'manager'; break; }
+      } else if (state.done) break;
 
       state.round += 1;
       send({type: 'round', round: state.round});
@@ -314,7 +325,7 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
         const score1 = await judgeTurn(env, state, doctor.content, interp1.content, runSignal);
         send({type: 'score', round: state.round, for: 'to_patient', score: score1});
       }
-      if (doctor.terminated) { stopped = 'doctor'; break; }
+      if (doctor.terminated && await canEnd('医生')) { stopped = 'doctor'; break; }
 
       // 患者 → 口译（患→医）→ 评分（同上，告别语也要翻译）
       const patient = await patientTurn(env, state, runSignal);
@@ -328,7 +339,12 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
         const score2 = await judgeTurn(env, state, patient.content, interp2.content, runSignal);
         send({type: 'score', round: state.round, for: 'to_doctor', score: score2});
       }
-      if (patient.terminated || interp2Terminated) { stopped = patient.terminated ? 'patient' : 'interpreter'; break; }
+      if (patient.terminated || interp2Terminated) {
+        if (await canEnd(patient.terminated ? '患者' : '译员')) {
+          stopped = patient.terminated ? 'patient' : 'interpreter';
+          break;
+        }
+      }
     }
   } catch (e) {
     autoRuns.delete(runId);
