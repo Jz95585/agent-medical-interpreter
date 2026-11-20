@@ -663,6 +663,7 @@ async function startAuto() {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
+  let sawDone = false;
   while (true) {
     const {done, value} = await reader.read();
     if (done) break;
@@ -672,13 +673,24 @@ async function startAuto() {
     for (const part of parts) {
       const line = part.split('\n').find(l => l.startsWith('data: '));
       if (!line) continue;
-      handleAutoEvent(JSON.parse(line.slice(6)));
+      const ev = JSON.parse(line.slice(6));
+      if (ev.type === 'done') sawDone = true;
+      handleAutoEvent(ev);
     }
+  }
+  // 流结束但没收到 done：服务端异常断开（如进程重启），复位界面避免卡在"运行中"
+  if (!sawDone) {
+    setStatus('连接中断：演练流未正常结束，请重试。');
+    showAlert('连接中断：演练流未正常结束，请重试；若反复出现请联系开发者查看服务端日志。');
+    $('#startBtn').disabled = false;
+    $('#stopBtn').hidden = true;
+    $('#stopBtn').disabled = false;
   }
 }
 
 function handleAutoEvent(ev) {
-  switch (ev.type) {
+  try {
+    switch (ev.type) {
     case 'status': setStatus(ev.label); break;
     case 'info':
       setStatus(`患者：${ev.patientInfo.name}（${ev.patientInfo.age}岁 · ${ev.patientInfo.country} · ${ev.patientInfo.personality}）`);
@@ -716,8 +728,14 @@ function handleAutoEvent(ev) {
       setStatus('出错：' + m);
       showAlert('出错：' + m);
       $('#startBtn').disabled = false;
+      $('#stopBtn').hidden = true;
+      $('#stopBtn').disabled = false;
       break;
     }
+  }
+  } catch (e) {
+    // 单个事件处理失败不应中断整条演练流：记录事件内容便于定位，其余事件继续消费
+    console.error('[ami] 演练事件处理异常:', ev?.type, e, ev);
   }
 }
 

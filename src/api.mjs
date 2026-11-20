@@ -265,14 +265,15 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
   // 协作式中止：用户点"中止演练"触发 stopCtrl.abort()，当前步骤收尾后照常产出报告与存档
   const runSignal = stopCtrl ? AbortSignal.any([signal, stopCtrl.signal]) : signal;
 
-  send({type: 'status', label: '生成患者人设（信息生成器）'});
-  state.patientInfo = await makePatientInfo(env, {scenario: settings.scenario, params: settings.params}, runSignal);
-  send({type: 'info', patientInfo: state.patientInfo});
-  send({type: 'status', label: `开始演练：${settings.scenario} · ${settings.doctorLanguage}医生 ↔ ${state.patientInfo.language}患者`});
-
   let stopped = null;
   let failure = null;
   try {
+    // 患者人设生成也纳入统一收尾：此阶段中止/出错照常产出 done（保留已完成部分=空报告）
+    send({type: 'status', label: '生成患者人设（信息生成器）'});
+    state.patientInfo = await makePatientInfo(env, {scenario: settings.scenario, params: settings.params}, runSignal);
+    send({type: 'info', patientInfo: state.patientInfo});
+    send({type: 'status', label: `开始演练：${settings.scenario} · ${settings.doctorLanguage}医生 ↔ ${state.patientInfo.language}患者`});
+
     // 诊前接入（round 0，所有场景共用）：译员迎候/转达引荐 + 核对身份 + 口译经验分支，
     // 评分沿用现有量规（openOriginal/principles 原话分别为引荐词/任务描述）
     send({type: 'status', label: '诊前接入：译员与患者对接…'});
