@@ -116,22 +116,30 @@ async function callModel(env, messages, {json = false, max = 1200, temperature =
     return {message: dry || DRY_SAMPLES.interpreter, model: 'dry-run', usage: null};
   }
   if (!env.AMI_API_KEY) throw err('LLM 服务尚未配置，请填写 .env 中的 AMI_API_KEY。', 503);
+  const timeoutSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000);
+  const post = (withReasoning) => fetch((env.AMI_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '') + '/chat/completions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + env.AMI_API_KEY},
+    body: JSON.stringify({
+      model: env.AMI_MODEL || 'deepseek/deepseek-v4.1-flash',
+      messages,
+      stream: false,
+      max_tokens: max,
+      temperature,
+      ...(withReasoning ? {reasoning: {enabled: false}} : {}),
+      ...(json ? {response_format: {type: 'json_object'}} : {}),
+    }),
+    signal: timeoutSignal,
+  });
+
   let r;
   try {
-    r = await fetch((env.AMI_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '') + '/chat/completions', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + env.AMI_API_KEY},
-      body: JSON.stringify({
-        model: env.AMI_MODEL || 'deepseek/deepseek-v4.1-flash',
-        messages,
-        stream: false,
-        max_tokens: max,
-        temperature,
-        reasoning: {enabled: false},
-        ...(json ? {response_format: {type: 'json_object'}} : {}),
-      }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
-    });
+    r = await post(true);
+    // 部分模型（如 Mistral）不接受 reasoning 字段并返回 400，去掉后重试一次
+    if (r.status === 400) {
+      console.error('[llm] 400，去掉 reasoning 重试', tag || '(无标签)');
+      r = await post(false);
+    }
   } catch (e) {
     throw err(e.name === 'AbortError' ? '任务已停止' : 'LLM 服务暂时未响应，请重试。', 502);
   }

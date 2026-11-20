@@ -637,7 +637,15 @@ npm run coverage -- --strict  # 有缺口时退出码 1，可用于上线前检�
 改 `.env` 的 `AMI_MODEL` 即可，但模型需要满足两点：
 
 1. 支持 OpenAI 兼容的 `response_format: {"type": "json_object"}`，否则评分解析会失败
-2. 能接受请求体里的 `reasoning: {"enabled": false}`（`src/llm.mjs:95` 硬编码）；若服务端拒绝未知字段，需要去掉这一项
+2. 能接受请求体里的 `reasoning: {"enabled": false}`。不接受并返回 400 的模型（如 Mistral）会自动去掉该字段重试一次
+
+需要先比较候选模型时：
+
+```bash
+npm run model-compare -- --models=deepseek/deepseek-v4.1-flash,meta-llama/llama-4-maverick --reps=2
+```
+
+脚本会用同一病例分别跑完整演练，统计语言错误、未翻译、话轮长度与耗时。部分海外模型受 OpenRouter 区域限制，调用前先用 `GET /models` 确认可用。
 
 ### 扩充患者参数池
 
