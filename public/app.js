@@ -325,7 +325,8 @@ function clearCols() {
   speakQueueGen++; // 清场停止自动播放队列与当前朗读
   stopSpeakAll();
   clearAlert();
-  $('#stopBtn').hidden = true;
+  // 注意：这里不能动 stopBtn 的可见性——startAuto 等启动函数清场时按钮刚被 startBtn 处理器打开，
+  // 在此隐藏会导致"中止演练"按钮全程不可见（由 resetStage/事件处理器统一管理）
   $('#scoreList').innerHTML = '<p class="empty">暂无评分。开始演练后，每句口译都会在此逐维度打分。</p>';
   $('#report').hidden = true;
   $('#refBox').hidden = true;
@@ -343,6 +344,7 @@ function clearCols() {
 
 function resetStage() {
   clearCols();
+  $('#stopBtn').hidden = true; // 模式切换/重开时隐藏，模式1 开始后由 startBtn 处理器打开
   state.sessionId = null;
   state.pending = null;
   state.transcript = []; // 新演练重置答疑上下文快照
