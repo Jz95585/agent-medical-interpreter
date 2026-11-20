@@ -162,6 +162,8 @@ body {
 .msg.doctor .msgMain { background: var(--blue-soft); border-top-left-radius: 4px; }
 .msg.patient .msgMain { background: var(--orange-soft); border-top-right-radius: 4px; }
 .msg.interpreter .msgMain { background: var(--green-soft); }
+.msg.receptionist { align-self: flex-start; opacity: .92; }
+.msg.receptionist .msgMain { background: #eef0f3; border-top-left-radius: 4px; }
 .msg.scored .msgMain { outline: 2px solid #f2c94c; }
 .speakBtn {
   float: right; margin: -2px 0 0 6px; padding: 0 3px; border: 0; background: transparent;

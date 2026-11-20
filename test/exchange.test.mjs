@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {startServer, post} from './helpers.mjs';
 
-const params = {disease: '肾结石', country: '美国', language: '英文', gender: '女', age: 42, doctorLanguage: '中文'};
+const params = {disease: '肾结石', country: '美国', language: '英文', gender: '女', age: 42, doctorLanguage: '中文', intakePath: 'direct'};
 
 test('演练结束后导出的 docx 使用会话中的译员名', async t => {
   const s = await startServer();
@@ -13,13 +13,19 @@ test('演练结束后导出的 docx 使用会话中的译员名', async t => {
   });
   assert.equal(startResp.status, 200);
   const start = await startResp.json();
+  assert.equal(start.first, null, '诊前接入模式下医生不先开口');
+  assert.ok(start.intakeTask.includes('诊前接入任务'));
 
+  // 第 1 步：诊前接入开场（不计入轮数预算）
   const step1 = await post(s.base, '/api/drill/step', {sessionId: start.sessionId, translation: 'Hello, I am the interpreter.'});
   assert.equal(step1.status, 200);
 
-  const step2 = await post(s.base, '/api/drill/step', {sessionId: start.sessionId, translation: 'Thank you, doctor.'});
+  // 第 2、3 步：主流程两个半句（医→患、患→医），第 3 步达到 maxRounds*2 触发 max_rounds 收尾
+  const step2 = await post(s.base, '/api/drill/step', {sessionId: start.sessionId, translation: 'Hello, I am Dr. Zhang. What seems to be the problem?'});
   assert.equal(step2.status, 200);
-  const done = await step2.json();
+  const step3 = await post(s.base, '/api/drill/step', {sessionId: start.sessionId, translation: 'Hello doctor, my name is Olivia Martin. I have blood in my urine.'});
+  assert.equal(step3.status, 200);
+  const done = await step3.json();
   assert.equal(done.finished.reason, 'max_rounds');
   assert.ok(done.exportId, '结束后应返回 exportId');
 

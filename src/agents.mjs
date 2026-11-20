@@ -160,8 +160,8 @@ ${sc.terminateNote}
 }
 
 function doctorView(state) {
-  // 医生视角：自己的原话 + 口译员译回的（医生语言）译文
-  return state.log.filter(e => e.role === 'doctor' || (e.role === 'interpreter' && e.dir === 'to_doctor'))
+  // 医生视角：自己的原话 + 口译员译回的（医生语言）译文；intake 阶段的对话不进医生上下文（由摘要注代替）
+  return state.log.filter(e => e.stage !== 'intake' && (e.role === 'doctor' || (e.role === 'interpreter' && e.dir === 'to_doctor')))
     .map(e => ({role: e.role, content: e.content}));
 }
 
@@ -183,12 +183,16 @@ async function doctorTurn(env, state, signal) {
     ? `\n以下是来自诊疗手册（专业版）的参考资料，供诊断与解释时参考：\n${JSON.stringify(state.msdRefs)}\n`
     : '';
 
+  // 诊前接入完成后的开场衔接：医生不再重复自我介绍/核对身份，直接进入问诊
+  const intakeNote = state.intakeDone
+    ? `诊前接入已完成：译员已向患者自我介绍并核对了患者身份${state.patientInfo.name ? '（患者姓名：' + state.patientInfo.name + '）' : ''}，患者${state.intake?.familiar ? '有医疗口译使用经验' : '是首次使用医疗口译服务'}。你的开场不需要再自我介绍或重新核对身份，直接问候并进入问诊正题。`
+    : '';
   const prompt = `你和口译员已有下面的对话：
 ${convText}
 ${refText}
 ${scenario.id === 'followup' && view.length <= 1 ? `本次复诊针对的疾病是「${state.patientInfo.disease_info.disease_type}」，患者既往情况——症状：${state.patientInfo.disease_info.symptoms.join('、')}；病史：${state.patientInfo.disease_info.medical_history}。请围绕这一疾病复诊，不要询问与本疾病无关的症状。\n` : ''}
 请你根据上述对话内容，继续以${state.doctor.roleLabel}的身份回答口译员。
-${view.length <= 1 ? scenario.doctorOpening : ''}
+${view.length <= 1 ? (intakeNote || scenario.doctorOpening) : ''}
 ${scenario.id === 'consult' || scenario.id === 'followup' ? '给出治疗方案时请你尽可能详细地描述你的诊断和治疗建议，包括可能的药物、剂量、使用方法等。' : ''}
 你应该始终使用第一人称直接跟患者对话，不要输出括号中的说明或"根据患者的症状"分析等内容。
 必须确保输出的对话都是能够在现实${scenario.name}场景中口头表述的。
@@ -241,9 +245,10 @@ function turnTooLong(text) {
 // ─── 患者智能体（移植 PatientAgent + 新参数注入 + MSD 通俗版资料）───
 function patientView(state) {
   // 模式2：医生（用户）直接用患者语言发言，患者能看到医生的话
-  return state.log.filter(e => e.role === 'patient'
+  // intake 阶段的话轮不进主流程上下文（患者已在接入时知晓译员身份，避免污染 MSD 注入时机）
+  return state.log.filter(e => e.stage !== 'intake' && (e.role === 'patient'
     || (e.role === 'interpreter' && e.dir === 'to_patient')
-    || (state.settings.mode === 'm2' && e.role === 'doctor'));
+    || (state.settings.mode === 'm2' && e.role === 'doctor')));
 }
 
 // 患者系统提示词（patientTurn 使用；buildPromptPreview 复用，占位字段由患者参数填充）
@@ -556,6 +561,112 @@ ${dims.map(d => `- ${d.key}`).join('\n')}
   return result;
 }
 
+// ─── 诊前接入（intake，所有场景共用的前置阶段）：医生问诊前，译员完成迎候、自我介绍、
+// 核对身份与口译经验询问；患者熟悉口译则跳过原则阐述。译员在此阶段拥有"自主话轮"——
+// 直接用患者语言说话，不翻译任何原话。两种接入路径：①前台引荐 ②译员直接迎候 ───
+function intakeOpenTask() {
+  return '【诊前接入任务】向患者迎候并自我介绍（你是今天的医疗口译员）、核对身份（姓名与出生日期）、询问患者是否使用过医疗口译服务。';
+}
+function intakePrinciplesTask() {
+  return '【原则阐述任务】患者是首次使用医疗口译服务：请简要说明口译的工作方式——以第一人称逐句翻译、可随时打断澄清、内容严格保密。';
+}
+
+const INTAKE_FAMILIAR_RE = /(用过|有).{0,6}(医疗口译|口译员|口译服务|翻译员|翻译服务)|((used|worked with|seen|had) (an )?(medical )?)interpreter|I know how (it|this|that) works/i;
+const INTAKE_UNFAMILIAR_RE = /(第一次|首次|没有用过|没用过|不了解|不熟悉)(.{0,8}(口译|翻译|interpreter))?|first time|never (used|worked|seen|had)|not (sure|familiar) how/i;
+
+// 判断患者是否熟悉口译服务：明确关键词直接判定（零成本），模糊时 LLM 分类兜底
+async function classifyPatientFamiliar(env, text, signal) {
+  const t = String(text || '');
+  if (INTAKE_FAMILIAR_RE.test(t)) return true;
+  if (INTAKE_UNFAMILIAR_RE.test(t)) return false;
+  try {
+    const r = await callModel(env, [
+      {role: 'user', content: `判断患者的回答是否表示"熟悉医疗口译服务/有使用经验"。只输出严格 JSON：{"familiar": true 或 false}\n患者回答：${t.slice(0, 300)}`},
+    ], {json: true, max: 40, temperature: 0, tag: 'intake_classify', signal});
+    const v = typeof r.message === 'string' ? parseJSON(r.message) : r.message;
+    return !!v.familiar;
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return false; // 分类失败按"不熟悉"处理——宁多讲原则，不漏讲
+  }
+}
+
+// 路径①：前台引荐话轮。前台用医生语言向译员引荐患者，说完即退场（role: receptionist）
+async function receptionistTurn(env, state, signal) {
+  const pl = state.patientInfo.language;
+  const dept = state.doctor.specialization || '相应科室';
+  const name = state.patientInfo.name || '患者';
+  const r = await callModel(env, [
+    {role: 'user', content: `医院国际门诊前台，正在把一名外籍患者引荐给今日的医疗口译员。请生成前台说的一句话（中文）：向口译员打招呼、说明患者姓名（${name}）、患者语言（${pl}）、今天的就诊科室（${dept}）、是否第一次来我们医院。自然口语，一句话，不要任何说明、括号或注释。`},
+  ], {max: 150, temperature: 0.5, tag: 'intake_reception', signal});
+  const content = String(r.message || '').trim();
+  state.log.push({role: 'receptionist', content, stage: 'intake'});
+  return {role: 'receptionist', content};
+}
+
+// 译员开场话轮（路径①：转达前台引荐+自我介绍；路径②：直接迎候）+ 核对身份 + 问口译经验
+async function interpreterIntakeOpen(env, state, {reception = ''}, signal) {
+  const pl = state.patientInfo.language;
+  const dl = state.settings.doctorLanguage || '中文';
+  const sys = interpreterSystem(state) + `\n当前是诊前接入环节：医生还没开始问诊，这是你自己的话轮——直接用${pl}对患者说话，不是翻译任何人的原话。`;
+  const askBlock = `2. 一句话自我介绍：你是今天的医疗口译员，会把${dl}医生的话翻译给他/她；
+3. 核对身份：确认患者姓名与出生日期；
+4. 询问患者以前是否使用过医疗口译服务。
+直接用${pl}输出一段自然友好的话，总共不超过四句，不要任何说明、括号或注释。`;
+  const prompt = reception
+    ? `前台刚对你说：「${reception}」\n请完成诊前接入，把这段话对${pl}患者说出来，包含：
+1. 把前台引荐的意思简要转达给患者；
+${askBlock}`
+    : `患者刚被带到诊室（或正在走廊/电梯口遇到你），医生还没开始问诊。请完成诊前接入，直接用${pl}对患者说一段话，包含：
+1. 礼貌迎候（可以请患者落座，也可以边走边交流，不拘泥于固定姿态）；
+${askBlock}`;
+  let reply = await callWithLangCheck(env, sys, prompt, pl,
+    {max: 400, temperature: 0.5, tag: 'intake_open', signal}, signal);
+  const over = turnTooLong(reply);
+  if (over) {
+    const retry = await callWithLangCheck(env, sys, `${prompt}\n\n纠正：你上一条超过 4 句。请压缩为不超过四句的简短版本，直接输出。`, pl,
+      {max: 400, temperature: 0.5, tag: 'intake_open', signal}, signal);
+    if (!turnTooLong(retry) || retry.length < reply.length) reply = retry;
+  }
+  const content = reply.trim();
+  state.log.push({role: 'interpreter', dir: 'to_patient', content, stage: 'intake'});
+  return {role: 'interpreter', dir: 'to_patient', content};
+}
+
+// 译员原则阐述话轮：患者首次使用口译服务时说明工作方式（第一人称/可打断/保密）
+async function interpreterPrinciplesTurn(env, state, signal) {
+  const pl = state.patientInfo.language;
+  const sys = interpreterSystem(state) + `\n当前是诊前接入环节：患者表示是第一次使用医疗口译服务，这是你自己的话轮——直接用${pl}说话，不是翻译。`;
+  const prompt = `请用${pl}向患者简要说明医疗口译的核心原则，让患者知道如何配合：
+1. 你会以第一人称逐句翻译医生和患者的话，不增不减信息；
+2. 患者有任何疑问、没听清或没听懂，可以随时打断，你会向医生澄清；
+3. 谈话内容严格保密。
+直接用${pl}输出一段自然口语，总共不超过四句，不要任何说明、括号或注释。`;
+  const reply = await callWithLangCheck(env, sys, prompt, pl,
+    {max: 400, temperature: 0.5, tag: 'intake_principles', signal}, signal);
+  const content = reply.trim();
+  state.log.push({role: 'interpreter', dir: 'to_patient', content, stage: 'intake'});
+  return {role: 'interpreter', dir: 'to_patient', content};
+}
+
+// 患者的诊前应答（直接用患者语言与译员对话，医生未参与，无需翻译）
+async function patientIntakeTurn(env, state, {kind = 'open'} = {}, signal) {
+  const info = state.patientInfo;
+  const belief = info.religion && info.religion !== '无特定信仰' ? `你的宗教信仰是${info.religion}。` : '';
+  const taboo = info.taboos && info.taboos !== '无特殊禁忌' ? `你的文化禁忌：${info.taboos}。` : '';
+  const diet = info.dietary && info.dietary !== '无特殊要求' ? `你的饮食习惯：${info.dietary}。` : '';
+  const system = patientSystem(state, belief, diet, taboo)
+    + `\n当前是诊前接入环节：国际门诊的口译员正在向你自我介绍并核对身份，你还没有见到医生。请以患者身份直接用${info.language}回答口译员（这段对话不需要翻译）。`;
+  const prompt = kind === 'ack'
+    ? `译员刚向你说明了医疗口译的工作方式。请简短回应：表示明白了或感谢，最多两句话。`
+    : `口译员刚向你问好并询问了你的姓名、出生日期，以及以前是否使用过医疗口译服务。请回答：${info.name ? `告知你的姓名（${info.name}）和出生日期（可自然编造一个），` : ''}并如实回答你是否使用过医疗口译服务。`;
+  const reply = await callWithLangCheck(env, system, prompt, info.language,
+    {max: 300, temperature: 0.6, tag: 'intake_patient', signal}, signal);
+  const content = stripTerminate(reply);
+  state.log.push({role: 'patient', content, stage: 'intake'});
+  return {role: 'patient', content, terminated: false};
+}
+
 // ─── 参考建议：用户卡住时给出当下应当说的译文 + 四角度讲解（设计稿模式3）───
 async function genReference(env, state, original, targetLang, signal) {
   const r = await callModel(env, [
@@ -646,7 +757,7 @@ ${lines}
 // ─── 答疑助手（独立 Tutor，不参与演练编排）：就演练内容提问，联动 MSD 检索深度解析 ───
 // 引用纪律：refs 由调用方经真实知识库检索传入；回答中未使用的资料不得编造来源/版本号
 async function tutorAnswer(env, {question, transcript, target, refs, doctorLanguage, patientLanguage, disease}, signal) {
-  const name = {doctor: '医生', patient: '患者', interpreter: '译员'};
+  const name = {doctor: '医生', patient: '患者', interpreter: '译员', receptionist: '前台'};
   const dialogue = (transcript || []).map(e => {
     const who = name[e.role] || e.role;
     const to = e.role === 'interpreter' && e.dir ? (e.dir === 'to_patient' ? '（译给患者）' : '（译给医生）') : '';
@@ -856,4 +967,4 @@ function buildPromptPreview(scenarioId, interpreterType) {
   };
 }
 
-export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, tutorAnswer, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap};
+export {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, tutorAnswer, langMismatch, buildPromptPreview, judgeSystem, turnTooLong, bigramOverlap, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn};

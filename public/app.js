@@ -373,12 +373,12 @@ function updateChatMask() {
 }
 
 // 竖排时间线消息：colId 仅用于推断角色（doctorCol/patientCol/interpCol），所有消息按发言顺序流入同一列
-const MSG_AVATARS = {doctor: 'av_doctor.svg', patient: 'av_patient.svg', interpreter: 'av_interpreter.svg'};
+const MSG_AVATARS = {doctor: 'av_doctor.svg', patient: 'av_patient.svg', interpreter: 'av_interpreter.svg', receptionist: 'av_receptionist.svg'};
 function msgRole(colId) {
   return colId === '#doctorCol' ? 'doctor' : colId === '#patientCol' ? 'patient' : 'interpreter';
 }
-function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '') {
-  const role = msgRole(colId);
+function bubble(colId, tagText, text, extraClass = '', lang = '', dir = '', roleOverride = '') {
+  const role = roleOverride || msgRole(colId);
   // 答疑上下文快照：三种模式的所有演练话轮统一收进来
   state.transcript.push({role, dir, text});
   const div = document.createElement('div');
@@ -687,12 +687,14 @@ function handleAutoEvent(ev) {
       break;
     case 'round': break;
     case 'message': {
-      if (ev.speaker === 'doctor') bubble('#doctorCol', `${roleLabel()} · 第${ev.round}轮`, ev.text, '', ev.lang);
-      else if (ev.speaker === 'patient') bubble('#patientCol', `患者 · 第${ev.round}轮`, ev.text, '', ev.lang);
+      const rnd = ev.round ? `第${ev.round}轮` : '诊前接入';
+      if (ev.speaker === 'doctor') bubble('#doctorCol', `${roleLabel()} · ${rnd}`, ev.text, '', ev.lang);
+      else if (ev.speaker === 'patient') bubble('#patientCol', `患者 · ${rnd}`, ev.text, '', ev.lang);
+      else if (ev.speaker === 'receptionist') bubble('#doctorCol', '前台 · 诊前接入', ev.text, '', ev.lang, '', 'receptionist');
       else bubble('#interpCol', ev.dir === 'to_patient' ? `译给患者（${ev.lang}）` : `译给${roleLabel()}（${ev.lang}）`, ev.text, '', ev.lang, ev.dir);
       break;
     }
-    case 'score': addScoreCard(ev.score, `第${ev.round}轮 · ${dirLabel(ev.for)}`, lastMsg('.msg.interpreter')); break;
+    case 'score': addScoreCard(ev.score, `${ev.round ? '第' + ev.round + '轮' : '诊前接入'} · ${dirLabel(ev.for)}`, lastMsg('.msg.interpreter')); break;
     case 'done': {
       $('#stopBtn').hidden = true;
       $('#stopBtn').disabled = false;
@@ -735,13 +737,14 @@ async function startDrill() {
   $('#doctorLangLabel').textContent = data.settings.doctorLanguage;
   $('#patientLangLabel').textContent = data.settings.patientLanguage;
   $('#langPair').textContent = `${data.settings.doctorLanguage} ↔ ${data.settings.patientLanguage}`;
-  bubble('#doctorCol', `${roleLabel()} · 第${data.first.round}轮`, data.first.text, '', data.first.lang);
-  state.pending = {original: data.first.text, round: data.first.round};
+  // 诊前接入：路径①先展示前台引荐词（要翻译），路径②直接领开场任务
+  if (data.first) bubble('#doctorCol', '前台 · 诊前接入', data.first.text, '', data.first.lang, '', 'receptionist');
+  state.pending = {original: data.intakeTask, round: 0};
   state.pendingTarget = 'to_patient';
-  $('#inputHint').textContent = `请将医生的话译成${data.settings.patientLanguage}（参考要点：${data.hints[0]?.title || ''}）`;
+  $('#inputHint').textContent = data.intakeHint;
   $('#inputBox').hidden = false;
   $('#translationInput').value = '';
-  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country}）· 你以【${data.settings.personaName}】身份开始口译，满分 100`);
+  setStatus(`患者：${data.patientInfo.name}（${data.patientInfo.age}岁 · ${data.patientInfo.country}）· 诊前接入：请先完成开场（${data.intake.path === 'reception' ? '前台引荐' : '译员迎候'}路径）`);
 }
 
 async function submitTranslation() {
@@ -763,7 +766,7 @@ async function submitTranslation() {
     if (!resp.ok) { const m = friendlyError(data.error || ('HTTP ' + resp.status)); setStatus('出错：' + m); showAlert('出错：' + m); return; }
 
     if (data.score) {
-      addScoreCard(data.score, `第${state.pending.round}轮 · 我的译文`, lastMsg('.msg.interpreter'));
+      addScoreCard(data.score, `${state.pending.round ? '第' + state.pending.round + '轮' : '诊前接入'} · 我的译文`, lastMsg('.msg.interpreter'));
       state.aiTotals.push(data.score.percent ?? Math.round(data.score.total / data.score.perfect * 100));
     } else {
       state.aiTotals.push(null);
@@ -780,14 +783,26 @@ async function submitTranslation() {
       $('#startBtn').disabled = false;
       return;
     }
+    if (data.reply) {
+      // 诊前接入中患者的应答（与医生开场同批返回时，先画患者气泡）
+      bubble('#patientCol', `患者 · 诊前接入`, data.reply.text, '', data.reply.lang);
+    }
     if (data.next) {
-      const col = data.next.speaker === 'doctor' ? '#doctorCol' : '#patientCol';
-      bubble(col, `${data.next.speaker === 'doctor' ? roleLabel() : '患者'} · 第${data.next.round}轮`, data.next.text, '', data.next.lang);
-      state.pending = {original: data.next.text, round: data.next.round};
-      state.pendingTarget = data.next.speaker === 'doctor' ? 'to_patient' : 'to_doctor';
-      const target = data.next.speaker === 'doctor' ? state.drillLangs.patientLanguage : state.drillLangs.doctorLanguage;
-      $('#inputHint').textContent = `请将${data.next.speaker === 'doctor' ? roleLabel() : '患者'}的话译成${target}` +
-        (data.hint ? `（参考要点：${data.hint.title} — ${data.hint.zh}）` : '');
+      if (data.next.speaker === 'task') {
+        // 诊前接入任务卡（如原则阐述）：不进气泡，直接更新待办与输入提示
+        state.pending = {original: data.next.text, round: data.next.round};
+        state.pendingTarget = 'to_patient';
+        $('#inputHint').textContent = data.next.hint || '';
+      } else {
+        const rnd = data.next.round ? `第${data.next.round}轮` : '诊前接入';
+        const col = data.next.speaker === 'doctor' ? '#doctorCol' : '#patientCol';
+        bubble(col, `${data.next.speaker === 'doctor' ? roleLabel() : '患者'} · ${rnd}`, data.next.text, '', data.next.lang);
+        state.pending = {original: data.next.text, round: data.next.round};
+        state.pendingTarget = data.next.speaker === 'doctor' ? 'to_patient' : 'to_doctor';
+        const target = data.next.speaker === 'doctor' ? state.drillLangs.patientLanguage : state.drillLangs.doctorLanguage;
+        $('#inputHint').textContent = `请将${data.next.speaker === 'doctor' ? roleLabel() : '患者'}的话译成${target}` +
+          (data.hint ? `（参考要点：${data.hint.title} — ${data.hint.zh}）` : '');
+      }
     }
     $('#translationInput').value = '';
   } finally {

@@ -47,7 +47,8 @@ test('自动演练中途失败时返回 done 事件并保留已完成内容', as
   assert.ok(done, '应下发 done 事件，避免前端停留在运行中');
   assert.equal(done.stopped, 'error');
   assert.ok(done.saved, '应保存已完成部分');
-  assert.equal(done.rounds, 1);
+  // mock 全 500：故障发生在诊前接入阶段（round 0），主流程尚未开始 → 已完成 0 轮
+  assert.equal(done.rounds, 0);
 
   if (done.saved) fs.rmSync(path.join(root, 'output', done.saved), {force: true});
 });

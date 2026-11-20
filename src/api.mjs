@@ -4,7 +4,7 @@
 // 模式2（用户扮演医生）：设计稿规划中，返回 501
 // 量规编辑：GET /api/rubric · POST /api/rubric/save · POST /api/rubric/reset
 import {err, callModel, parseJSON} from './llm.mjs';
-import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer} from './agents.mjs';
+import {makePatientInfo, doctorTurn, patientTurn, interpreterTurn, judgeTurn, managerCheck, isTerminate, splitList, genReference, genTeaching, judgeMedStaff, genM2Hint, genPersonalFeedback, genDoctorFeedback, buildPromptPreview, tutorAnswer, intakeOpenTask, intakePrinciplesTask, classifyPatientFamiliar, receptionistTurn, interpreterIntakeOpen, interpreterPrinciplesTurn, patientIntakeTurn} from './agents.mjs';
 import * as msd from './msd.mjs';
 import {listScenarios, getScenario} from './scenarios.mjs';
 import {listPersonas, allDims, getPersona, getStore, savePersona, resetStore} from './rubric.mjs';
@@ -112,6 +112,7 @@ function recordOf(state, extra = {}) {
     teaching: state.teaching || null,
     sqlQueries: state.sqlQueries,
     rounds: state.round,
+    intake: state.intake || null, // 诊前接入记录：路径 + 患者是否熟悉口译
     ...extra,
   };
 }
@@ -141,13 +142,13 @@ function scoreReport(state) {
   return report;
 }
 
-// 从对话日志提取逐句对照（原话 ↔ 译文），供人工评分使用
+// 从对话日志提取逐句对照（原话 ↔ 译文），供人工评分使用；stage 区分诊前接入与主流程
 function buildPairs(state) {
   const pairs = [];
   let half = 0;
   let lastOriginal = '';
   for (const e of state.log) {
-    if (e.role === 'doctor' || e.role === 'patient') lastOriginal = e.content;
+    if (e.role === 'doctor' || e.role === 'patient' || e.role === 'receptionist') lastOriginal = e.content;
     else if (e.role === 'interpreter') {
       half += 1;
       pairs.push({
@@ -156,6 +157,7 @@ function buildPairs(state) {
         dir: e.dir,
         original: lastOriginal,
         translated: e.content,
+        stage: e.stage || 'main',
       });
     }
   }
@@ -218,6 +220,37 @@ async function matchDepartment(env, disease) {
   return {department, source: department ? 'ai' : 'none'};
 }
 
+// ─── 诊前接入（intake）：模式1/3 共用的编排逻辑 ───
+// 路径：①前台引荐（前台用医生语言引荐→译员转达+自我介绍）②译员直接迎候
+// 分支：患者熟悉口译服务→跳过原则阐述；不熟悉→译员阐述核心原则
+async function runIntakeOpen(env, state, signal, send, intakePath) {
+  state.intake = {path: intakePath};
+  let openOriginal = '';
+  if (intakePath === 'reception') {
+    const rec = await receptionistTurn(env, state, signal);
+    send?.({type: 'message', round: 0, speaker: 'receptionist', lang: state.settings.doctorLanguage, text: rec.content});
+    openOriginal = rec.content;
+  }
+  const open = await interpreterIntakeOpen(env, state, {reception: openOriginal}, signal);
+  send?.({type: 'message', round: 0, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: open.content});
+  return {original: openOriginal || intakeOpenTask(), content: open.content}; // 开场话轮的评分"原话"：引荐词或任务描述
+}
+
+async function runIntakeBranch(env, state, signal, send) {
+  const pat = await patientIntakeTurn(env, state, {kind: 'open'}, signal);
+  send?.({type: 'message', round: 0, speaker: 'patient', lang: state.patientInfo.language, text: pat.content});
+  const familiar = await classifyPatientFamiliar(env, pat.content, signal);
+  state.intake.familiar = familiar;
+  if (!familiar) {
+    const prin = await interpreterPrinciplesTurn(env, state, signal);
+    send?.({type: 'message', round: 0, speaker: 'interpreter', dir: 'to_patient', lang: state.patientInfo.language, text: prin.content});
+    const ack = await patientIntakeTurn(env, state, {kind: 'ack'}, signal);
+    send?.({type: 'message', round: 0, speaker: 'patient', lang: state.patientInfo.language, text: ack.content});
+    return {original: intakePrinciplesTask(), content: prin.content}; // 原则话轮的评分"原话"= 任务描述
+  }
+  return null;
+}
+
 // ─── 模式1：自动全流程（SSE，支持协作式中止）───
 async function runAuto(env, body, send, signal, runId, stopCtrl) {
   const settings = {
@@ -240,6 +273,23 @@ async function runAuto(env, body, send, signal, runId, stopCtrl) {
   let stopped = null;
   let failure = null;
   try {
+    // 诊前接入（round 0，所有场景共用）：译员迎候/转达引荐 + 核对身份 + 口译经验分支，
+    // 评分沿用现有量规（openOriginal/principles 原话分别为引荐词/任务描述）
+    send({type: 'status', label: '诊前接入：译员与患者对接…'});
+    const intakePath = ['reception', 'direct'].includes(settings.params.intakePath)
+      ? settings.params.intakePath
+      : (Math.random() < 0.5 ? 'reception' : 'direct');
+    const open = await runIntakeOpen(env, state, runSignal, send, intakePath);
+    const scoreOpen = await judgeTurn(env, state, open.original, open.content, runSignal);
+    send({type: 'score', round: 0, for: 'to_patient', score: scoreOpen});
+    const prin = await runIntakeBranch(env, state, runSignal, send);
+    if (prin) {
+      const scorePrin = await judgeTurn(env, state, prin.original, prin.content, runSignal);
+      send({type: 'score', round: 0, for: 'to_patient', score: scorePrin});
+    }
+    state.intakeDone = true;
+    send({type: 'status', label: '进入问诊环节…'});
+
     while (state.round < settings.maxRounds) {
       const terminate = await managerCheck(env, state, runSignal);
       if (terminate || state.done) break;
@@ -309,24 +359,47 @@ async function drillStart(env, body) {
   state.humanScores = [];
   state.hintUsed = 0;
   state.patientInfo = await makePatientInfo(env, {scenario: settings.scenario, params: settings.params}, undefined);
-  const doctor = await doctorTurn(env, state, undefined);
+
+  // 诊前接入（round 0）：用户先扮演译员完成开场——路径①翻译前台引荐词后缀自我介绍；路径②从零开场
+  const intakePath = ['reception', 'direct'].includes(settings.params.intakePath)
+    ? settings.params.intakePath
+    : (Math.random() < 0.5 ? 'reception' : 'direct');
+  let first = null;
+  let openOriginal;
+  let intakeHint;
+  if (intakePath === 'reception') {
+    const rec = await receptionistTurn(env, state, undefined);
+    state.log.push({role: 'receptionist', content: rec.content, stage: 'intake'});
+    first = {speaker: 'receptionist', lang: settings.doctorLanguage, text: rec.content, round: 0};
+    openOriginal = rec.content;
+    intakeHint = `诊前接入：请把前台的话翻译给患者（${state.patientInfo.language}），并在译文后自然接上自我介绍（你是今天的医疗口译员）、核对患者姓名与出生日期、询问是否使用过医疗口译服务。`;
+  } else {
+    openOriginal = intakeOpenTask();
+    intakeHint = `诊前接入：请用${state.patientInfo.language}向患者迎候（可请落座或边走边聊）、自我介绍（你是今天的医疗口译员）、核对姓名与出生日期、询问是否使用过医疗口译服务。`;
+  }
 
   const id = newSessionId();
-  sessions.set(id, {state, pending: {original: doctor.content, target: 'to_patient', round: 1}, half: 0, touched: Date.now()});
+  sessions.set(id, {
+    state, phase: 'intake_open', intakePath, openOriginal,
+    pending: {original: openOriginal, target: 'to_patient', round: 0}, half: 0, touched: Date.now(),
+  });
   console.error('[drill] session created:', id, 'total:', sessions.size);
   const sc = getScenario(settings.scenario);
-  const pl = state.patientInfo.language;
+  const patientLanguage = state.patientInfo.language;
   return json({
     sessionId: id,
     settings: {
       ...settings,
       personaName: getPersona(settings.interpreterType).name,
       doctorLanguage: settings.doctorLanguage,
-      patientLanguage: pl,
+      patientLanguage,
       perfect: allDims(settings.interpreterType).length * 5,
     },
     patientInfo: state.patientInfo,
-    first: {speaker: 'doctor', lang: settings.doctorLanguage, text: doctor.content, round: 1},
+    intake: {path: intakePath},
+    intakeTask: openOriginal,
+    intakeHint,
+    first,
     hints: sc.keyPoints,
     dims: allDims(settings.interpreterType),
   });
@@ -340,44 +413,101 @@ async function drillStep(env, body) {
   const translation = String(body.translation || '').trim();
   if (!translation) throw err('请输入译文。');
 
-  sess.half += 1;
-
-  // 1) AI 评分（人工评分模式下跳过以节省 token；人工分在结束后统一提交）
-  let score = null;
-  if (state.settings.scoringMode !== 'human') {
-    score = await judgeTurn(env, state, pending.original, translation, undefined);
-  }
-  state.log.push({role: 'interpreter', dir: pending.target, content: translation});
-  const result = {score, half: sess.half};
-
-  // 2) 推进到下一话轮
+  const result = {};
   let next = null;
-  if (pending.target === 'to_patient') {
-    // 译文交给患者 → 患者回应
-    const patient = await patientTurn(env, state, undefined);
-    if (patient.terminated) {
-      state.done = true;
-      result.finished = {reason: 'patient_terminate', text: patient.content};
+  let score = null;
+
+  // ─── 诊前接入阶段（round 0）：评分沿用现有量规，"原话"为引荐词/任务描述 ───
+  if (sess.phase === 'intake_open' || sess.phase === 'intake_principles') {
+    if (state.settings.scoringMode !== 'human') {
+      score = await judgeTurn(env, state, pending.original, translation, undefined);
+    }
+    state.log.push({role: 'interpreter', dir: 'to_patient', content: translation, stage: 'intake'});
+    result.score = score;
+    state.intake = state.intake || {path: sess.intakePath};
+
+    if (sess.phase === 'intake_open') {
+      // 患者应答 → 经验分支：熟悉则直接进入主流程，不熟悉则等用户提交原则阐述
+      const pat = await patientIntakeTurn(env, state, {kind: 'open'}, undefined);
+      const familiar = await classifyPatientFamiliar(env, pat.content, undefined);
+      state.intake.familiar = familiar;
+      if (familiar) {
+        result.reply = {lang: state.patientInfo.language, text: pat.content}; // 患者应答与医生开场一并下发
+        sess.phase = 'main';
+        state.intakeDone = true;
+      } else {
+        sess.phase = 'intake_principles';
+        sess.pending = {original: intakePrinciplesTask(), target: 'to_patient', round: 0};
+        next = {
+          speaker: 'task', text: sess.pending.original, round: 0,
+          hint: '诊前接入（原则阐述）：患者是首次使用医疗口译服务，请说明口译工作方式——第一人称逐句翻译、可随时打断澄清、内容严格保密。',
+        };
+      }
     } else {
-      next = {speaker: 'patient', lang: state.patientInfo.language, text: patient.content, round: pending.round};
-      sess.pending = {original: patient.content, target: 'to_doctor', round: pending.round};
+      // 原则阐述完成 → 患者简短确认 → 进入主流程问诊
+      const ack = await patientIntakeTurn(env, state, {kind: 'ack'}, undefined);
+      result.reply = {lang: state.patientInfo.language, text: ack.content};
+      sess.phase = 'main';
+      state.intakeDone = true;
+    }
+
+    if (sess.phase === 'main') {
+      state.intakeDone = true;
+      const doctor = await doctorTurn(env, state, undefined);
+      if (doctor.terminated) {
+        state.done = true;
+        result.finished = {reason: 'doctor_terminate', text: doctor.content};
+      } else {
+        next = {speaker: 'doctor', lang: state.settings.doctorLanguage, text: doctor.content, round: 1};
+        sess.pending = {original: doctor.content, target: 'to_patient', round: 1};
+      }
     }
   } else {
-    // 译文交给医生 → 医生回应
-    const doctor = await doctorTurn(env, state, undefined);
-    if (doctor.terminated) {
-      state.done = true;
-      result.finished = {reason: 'doctor_terminate', text: doctor.content};
-    } else {
-      next = {speaker: 'doctor', lang: state.settings.doctorLanguage, text: doctor.content, round: pending.round + 1};
-      sess.pending = {original: doctor.content, target: 'to_patient', round: pending.round + 1};
-    }
-  }
+    // ─── 主流程（原有逻辑）───
+    sess.half += 1;
 
-  // 3) 最大轮数兜底（与模式1同源的保护）
-  if (!state.done && sess.half >= state.settings.maxRounds * 2) {
-    state.done = true;
-    result.finished = {reason: 'max_rounds', text: ''};
+    // 1) AI 评分（人工评分模式下跳过以节省 token；人工分在结束后统一提交）
+    if (state.settings.scoringMode !== 'human') {
+      score = await judgeTurn(env, state, pending.original, translation, undefined);
+    }
+    state.log.push({role: 'interpreter', dir: pending.target, content: translation});
+    result.score = score;
+    result.half = sess.half;
+
+    // 2) 推进到下一话轮
+    if (pending.target === 'to_patient') {
+      // 译文交给患者 → 患者回应
+      const patient = await patientTurn(env, state, undefined);
+      if (patient.terminated) {
+        state.done = true;
+        result.finished = {reason: 'patient_terminate', text: patient.content};
+      } else {
+        next = {speaker: 'patient', lang: state.patientInfo.language, text: patient.content, round: pending.round};
+        sess.pending = {original: patient.content, target: 'to_doctor', round: pending.round};
+      }
+    } else {
+      // 译文交给医生 → 医生回应
+      const doctor = await doctorTurn(env, state, undefined);
+      if (doctor.terminated) {
+        state.done = true;
+        result.finished = {reason: 'doctor_terminate', text: doctor.content};
+      } else {
+        next = {speaker: 'doctor', lang: state.settings.doctorLanguage, text: doctor.content, round: pending.round + 1};
+        sess.pending = {original: doctor.content, target: 'to_patient', round: pending.round + 1};
+      }
+    }
+
+    // 3) 最大轮数兜底（与模式1同源的保护）
+    if (!state.done && sess.half >= state.settings.maxRounds * 2) {
+      state.done = true;
+      result.finished = {reason: 'max_rounds', text: ''};
+    }
+
+    if (!state.done) {
+      const sc = getScenario(state.settings.scenario);
+      const kps = sc.keyPoints;
+      result.hint = kps.length ? kps[(pending.round - 1) % kps.length] : null;
+    }
   }
 
   if (state.done) {
@@ -388,10 +518,6 @@ async function drillStep(env, body) {
     result.saved = fin.saved;
     result.exportId = fin.exportId;
     sessions.delete(body.sessionId);
-  } else {
-    const sc = getScenario(state.settings.scenario);
-    const kps = sc.keyPoints;
-    result.hint = kps.length ? kps[(pending.round - 1) % kps.length] : null;
   }
   return json({next, ...result});
 }
